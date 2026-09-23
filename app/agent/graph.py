@@ -1,13 +1,16 @@
 """LangGraph agent.
 
-    parse -> estimate -> schedule -> END
+    parse -> estimate -> END
 
-The graph is PURE: no database session, no HTTP, no file I/O. The caller hands
-it syllabus text and the user's day capacity; it returns an extraction, hour
-estimates and a plan. Persistence lives in app/api/routes.py.
+The graph does the two jobs that need a language model: reading the syllabus and
+judging how long each item takes. It does NOT schedule. Scheduling is
+deterministic code called from app/api/routes.py::_reschedule, which runs
+identically whether an upload, a corrected date, or a disruption triggered it.
 
-That boundary is deliberate -- the whole agent can be exercised with three
-dataclasses and no Postgres.
+Keeping the scheduler outside the graph is the point of the project, not an
+omission: there is exactly one writer of schedule blocks, and it needs no LLM.
+
+The graph is PURE: no database session, no HTTP, no file I/O.
 """
 
 from __future__ import annotations
@@ -21,7 +24,6 @@ from langgraph.graph import END, START, StateGraph
 from app.agent.tools.estimate_effort import estimate_effort
 from app.agent.tools.parse_syllabus import parse_syllabus
 from app.agent.tools.resolve_dates import resolve_dates
-from app.scheduler.core import DayCapacity, Task, build_schedule
 
 
 def key_for(course_code: str, title: str) -> str:
@@ -34,13 +36,11 @@ class AgentState(TypedDict, total=False):
     # inputs
     syllabus_text: str
     term_start: date | None
-    capacity: list[DayCapacity]
     credit_hours: float
     effort_multiplier: float
     # outputs
     extraction: Any           # SyllabusExtraction
     hours: dict[str, float]   # key_for(...) -> hours
-    plan: Any                 # scheduler.core.Plan
     trace: Annotated[list[str], operator.add]
 
 
@@ -86,46 +86,11 @@ def node_estimate(state: AgentState) -> AgentState:
     return {"hours": hours, "trace": trace}
 
 
-def node_build_schedule(state: AgentState) -> AgentState:
-    """Deterministic. Maps the extraction onto scheduler Tasks and calls
-    build_schedule -- the model gets no vote on where hours land."""
-    tasks: list[Task] = []
-    needs_date: list[str] = []
-
-    for course in state["extraction"].courses:
-        for a in course.assignments:
-            if a.is_category or a.due_at is None:
-                needs_date.append(a.title)
-                continue
-            key = key_for(course.code, a.title)
-            tasks.append(
-                Task(
-                    id=key,
-                    title=a.title,
-                    due=a.due_at.date(),
-                    hours=state["hours"].get(key, 2.0),
-                    weight=a.weight,
-                    earliest_start=a.available_at.date() if a.available_at else None,
-                )
-            )
-
-    plan = build_schedule(tasks, state.get("capacity", []))
-
-    note = f"scheduled {len(tasks)} task(s) into {len(plan.blocks)} block(s)"
-    if needs_date:
-        note += f"; {len(needs_date)} need a date from the user"
-    if plan.unscheduled:
-        note += f"; {len(plan.unscheduled)} did not fit"
-    return {"plan": plan, "trace": [note]}
-
-
 def build_graph():
     g = StateGraph(AgentState)
     g.add_node("parse", node_parse)
     g.add_node("estimate", node_estimate)
-    g.add_node("schedule", node_build_schedule)
     g.add_edge(START, "parse")
     g.add_edge("parse", "estimate")
-    g.add_edge("estimate", "schedule")
-    g.add_edge("schedule", END)
+    g.add_edge("estimate", END)
     return g.compile()

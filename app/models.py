@@ -58,13 +58,18 @@ class Assignment(Base):
         ForeignKey("courses.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(255))
-    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # Nullable: syllabi routinely omit dates, and an assignment with no date
+    # still has to exist so the user can supply one.
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     # Handout date. The scheduler will not place work before it.
     available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     weight: Mapped[float | None] = mapped_column(Float)        # fraction of final grade
     estimated_hours: Mapped[float] = mapped_column(Float, default=2.0)
     completed_hours: Mapped[float] = mapped_column(Float, default=0.0)
     notes: Mapped[str | None] = mapped_column(Text)
+    # A grading bucket ('Homework 30%') rather than one deliverable. Stored so
+    # the user can see it and add the real items; never scheduled.
+    is_category: Mapped[bool] = mapped_column(default=False)
 
     course: Mapped[Course] = relationship(back_populates="assignments")
     blocks: Mapped[list[ScheduleBlock]] = relationship(

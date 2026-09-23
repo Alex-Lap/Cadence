@@ -96,3 +96,24 @@ class ScheduleOut(BaseModel):
         description="Assignment titles that did not fit in available time.",
     )
     explanation: str | None = None
+
+
+class AssignmentOut(BaseModel):
+    id: str
+    course_code: str
+    title: str
+    due_at: datetime | None
+    available_at: datetime | None
+    weight: float | None
+    estimated_hours: float
+    needs_date: bool
+    is_category: bool
+
+
+class AssignmentPatch(BaseModel):
+    """Fields a user may correct. Everything else is derived."""
+
+    due_at: datetime | None = None
+    available_at: datetime | None = None
+    estimated_hours: float | None = None
+    is_category: bool | None = None
