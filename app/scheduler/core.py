@@ -8,10 +8,19 @@ Swappable for OR-Tools later behind the same signature.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import ceil
 from datetime import date, datetime, time, timedelta
 
 # Float slop guard. Hours are floats, so "is this task done?" is never `== 0`.
 EPS = 1e-9
+
+# Blocks are rounded to this, so the calendar shows 1.75h rather than 1.7142857h.
+QUANTUM = 0.25
+
+# How long a useful sitting is. The scheduler spreads a task over as many days
+# as it needs at roughly this size, instead of smearing it across every
+# available day -- 30 minutes on five projects a night is not a study plan.
+PREFERRED_BLOCK_HOURS = 2.0
 
 
 @dataclass
@@ -21,6 +30,9 @@ class Task:
     due: date
     hours: float
     weight: float | None = None
+    # Earliest day work can begin -- the handout date. Without it the scheduler
+    # happily books time on an assignment the student hasn't received yet.
+    earliest_start: date | None = None
 
 
 @dataclass
@@ -46,14 +58,47 @@ class Plan:
     unscheduled: list[str] = field(default_factory=list)
 
 
+def _round_q(hours: float) -> float:
+    """Snap to the nearest QUANTUM, never below it."""
+    return max(QUANTUM, round(hours / QUANTUM) * QUANTUM)
+
+
+def _ceil_q(hours: float) -> float:
+    """Snap UP to a QUANTUM. Used for block targets: rounding the target up and
+    then clamping to what's left makes the final block absorb the remainder,
+    instead of leaving a 15-minute orphan block at the end."""
+    return max(QUANTUM, ceil(hours / QUANTUM) * QUANTUM)
+
+
+def _pick_spread(days: list[date], n: int) -> list[date]:
+    """Choose n days spaced as evenly as possible across `days`.
+
+    Picking the first n would cram everything up front and waste the buffer
+    before the deadline; picking the last n would leave no slack at all.
+    """
+    if n >= len(days):
+        return days
+    if n <= 1:
+        return days[:1]
+    step = (len(days) - 1) / (n - 1)
+    chosen = sorted({round(i * step) for i in range(n)})
+    # Rounding can collide; top up with the earliest unused days.
+    for i in range(len(days)):
+        if len(chosen) >= n:
+            break
+        if i not in chosen:
+            chosen = sorted(chosen + [i])
+    return [days[i] for i in chosen]
+
+
 def _advance(t: time, hours: float) -> time:
     """Add `hours` to a wall-clock time, clamping at 23:59 instead of rolling
     into the next day. Clamping is a safety net, not a feature -- capacity
     should be small enough that it never fires."""
-    moved = datetime.combine(date.min, t) + timedelta(hours=hours)
+    moved = datetime.combine(date.min, t) + timedelta(minutes=round(hours * 60))
     if moved.date() > date.min:
         return time(23, 59)
-    return moved.time()
+    return moved.time().replace(second=0, microsecond=0)
 
 
 def build_schedule(
@@ -100,25 +145,37 @@ def build_schedule(
     # Earliest deadline first; heavier assignments win ties.
     for task in sorted(tasks, key=lambda t: (t.due, -(t.weight or 0.0))):
         left = task.hours
-        eligible = [c.day for c in days if c.day <= task.due and remaining[c.day] > EPS]
+        eligible = [
+            c.day
+            for c in days
+            if c.day <= task.due
+            and (task.earliest_start is None or c.day >= task.earliest_start)
+            and remaining[c.day] > EPS
+        ]
 
-        # Pass 1 -- spread evenly across every day that still has room.
+        # Pass 1 -- spread over as many days as the work needs at roughly
+        # PREFERRED_BLOCK_HOURS each, spaced across the available window.
         if eligible:
-            target = max(min_block_hours, task.hours / len(eligible))
-            for day in eligible:
+            wanted = max(1, ceil(task.hours / PREFERRED_BLOCK_HOURS))
+            chosen = _pick_spread(eligible, min(wanted, len(eligible)))
+            target = task.hours / len(chosen)
+
+            for day in chosen:
                 if left <= EPS:
                     break
-                take = min(target, remaining[day], left)
-                # Skip slivers, unless the sliver finishes the task.
+                take = min(_ceil_q(target), remaining[day], left)
+                # Absorb a sub-quantum tail rather than leaving 6 minutes over.
+                if 0 < left - take < QUANTUM and remaining[day] - take >= left - take:
+                    take = left
                 if take < min_block_hours and take < left - EPS:
                     continue
                 if take > EPS:
                     place(task, day, take)
                     left -= take
 
-        # Pass 2 -- greedily mop up whatever the even spread left behind.
+        # Pass 2 -- mop up whatever the spread left behind, earliest first.
         if left > EPS:
-            for day in (c.day for c in days if c.day <= task.due):
+            for day in eligible:
                 if left <= EPS:
                     break
                 take = min(remaining[day], left)

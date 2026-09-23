@@ -31,3 +31,11 @@ for course in result.courses:
         conf = "" if a.due_date_confidence == "explicit" else f" ({a.due_date_confidence})"
         wk = f" wk{a.due_week}" if a.due_week else ""
         print(f"  {when}{conf}  {a.title:<40} weight={a.weight}{wk}{flag}")
+
+from app.agent.tools.estimate_effort import estimate_effort
+
+print("\n" + "=" * 60, "\nEFFORT\n", "=" * 60)
+for course in result.courses:
+    items = [a.model_dump() for a in course.assignments]
+    for e in estimate_effort(course.title, items):
+        print(f"  {e.estimated_hours:>5.2f}h  {e.assignment_title:<40} {e.rationale[:60]}")

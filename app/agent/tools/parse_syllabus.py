@@ -80,6 +80,9 @@ DATES vs WEEKS -- this matters:
     week the item is DUE and leave due_at null. Do NOT convert weeks to
     calendar dates yourself -- code does that downstream.
 
+Also set available_week to the week the item is HANDED OUT. Work cannot begin
+before an assignment is assigned, and the scheduler needs that boundary.
+
 Computing due_week: read each item's OWN handout week from the schedule and
 add the stated offset. "Project 3 handout in Week 7; due after three weeks"
 -> due_week=10. Handout weeks are often irregular (4, 5, 7, 9, 11) -- read

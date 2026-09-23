@@ -59,6 +59,8 @@ class Assignment(Base):
     )
     title: Mapped[str] = mapped_column(String(255))
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # Handout date. The scheduler will not place work before it.
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     weight: Mapped[float | None] = mapped_column(Float)        # fraction of final grade
     estimated_hours: Mapped[float] = mapped_column(Float, default=2.0)
     completed_hours: Mapped[float] = mapped_column(Float, default=0.0)

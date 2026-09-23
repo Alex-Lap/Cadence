@@ -30,6 +30,18 @@ class ParsedAssignment(BaseModel):
         "explicit",
         description="'explicit' if the syllabus states this date, 'inferred' if you derived it.",
     )
+    available_at: datetime | None = Field(
+        None,
+        description="When work can begin. Leave null; derived from available_week.",
+    )
+    available_week: int | None = Field(
+        None,
+        description=(
+            "1-based course week this is HANDED OUT / assigned, if the syllabus "
+            "says. Work cannot start before it. For 'Project 3 handout in Week 7' "
+            "-> available_week=7."
+        ),
+    )
     due_week: int | None = Field(
         None,
         description=(
@@ -58,7 +70,13 @@ class EffortEstimate(BaseModel):
     assignment_title: str
     estimated_hours: float
     rationale: str
+    
+class EffortEstimates(BaseModel):
+    """Top-level structured-output container for estimate_effort."""
 
+    estimates: list[EffortEstimate]
+
+    
 
 class ScheduleBlockOut(BaseModel):
     assignment_id: str | None

@@ -47,3 +47,57 @@ def test_overcommitted_reports_unscheduled():
     tasks = [Task(id="a", title="Impossible", due=date(2026, 9, 15), hours=40)]
     plan = build_schedule(tasks, cap(2, hours=2))
     assert plan.unscheduled == ["Impossible"]
+
+
+def test_work_never_starts_before_the_handout_date():
+    """The bug the first real run exposed: Project 5 is handed out in November
+    and was being scheduled in September."""
+    tasks = [
+        Task(
+            id="p5",
+            title="Project 5",
+            due=date(2026, 9, 25),
+            hours=6,
+            earliest_start=date(2026, 9, 20),
+        )
+    ]
+    plan = build_schedule(tasks, cap(20, hours=4, start=date(2026, 9, 14)))
+    assert plan.blocks, "should still schedule something"
+    assert min(b.day for b in plan.blocks) >= date(2026, 9, 20)
+    assert max(b.day for b in plan.blocks) <= date(2026, 9, 25)
+
+
+def test_no_earliest_start_means_start_today():
+    tasks = [Task(id="a", title="A", due=date(2026, 9, 20), hours=4)]
+    plan = build_schedule(tasks, cap(10))
+    assert min(b.day for b in plan.blocks) == date(2026, 9, 14)
+
+
+def test_blocks_are_chunky_not_smeared():
+    """9 hours over a 21-day window should be a handful of real sittings, not
+    21 twenty-minute slivers."""
+    tasks = [Task(id="a", title="A", due=date(2026, 10, 4), hours=9)]
+    plan = build_schedule(tasks, cap(21, hours=4))
+    assert len(plan.blocks) <= 6
+    assert min(b.hours for b in plan.blocks) >= 1.0
+
+
+def test_hours_and_start_times_are_clean():
+    tasks = [
+        Task(id="a", title="A", due=date(2026, 10, 4), hours=8.75),
+        Task(id="b", title="B", due=date(2026, 10, 4), hours=6.5),
+    ]
+    plan = build_schedule(tasks, cap(21, hours=4))
+    for b in plan.blocks:
+        assert (b.hours * 4) % 1 == 0, f"{b.hours} is not a quarter hour"
+        assert b.start_time.second == 0 and b.start_time.microsecond == 0
+        assert b.start_time.minute % 15 == 0, b.start_time
+
+
+def test_spread_leaves_buffer_before_the_deadline():
+    """Work should not all pile up against the due date."""
+    tasks = [Task(id="a", title="A", due=date(2026, 10, 4), hours=8)]
+    plan = build_schedule(tasks, cap(21, hours=4))
+    days = sorted({b.day for b in plan.blocks})
+    assert days[0] <= date(2026, 9, 16), "should start early in the window"
+    assert len(days) >= 3, "should span several days"
