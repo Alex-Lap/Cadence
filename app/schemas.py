@@ -79,6 +79,7 @@ class EffortEstimates(BaseModel):
     
 
 class ScheduleBlockOut(BaseModel):
+    id: str
     assignment_id: str | None
     assignment_title: str | None
     day: date
@@ -108,6 +109,7 @@ class AssignmentOut(BaseModel):
     estimated_hours: float
     needs_date: bool
     is_category: bool
+    color: str | None = None
 
 
 class AssignmentPatch(BaseModel):
@@ -117,3 +119,13 @@ class AssignmentPatch(BaseModel):
     available_at: datetime | None = None
     estimated_hours: float | None = None
     is_category: bool | None = None
+    # "#rrggbb" to set, null to go back to the automatic colour.
+    color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+
+
+class BlockPatch(BaseModel):
+    """A dragged block. Any field present pins the block."""
+
+    day: date | None = None
+    start_time: time | None = None
+    hours: float | None = None

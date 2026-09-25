@@ -70,6 +70,8 @@ class Assignment(Base):
     # A grading bucket ('Homework 30%') rather than one deliverable. Stored so
     # the user can see it and add the real items; never scheduled.
     is_category: Mapped[bool] = mapped_column(default=False)
+    # User-chosen calendar colour, "#rrggbb". Null means "pick one automatically".
+    color: Mapped[str | None] = mapped_column(String(7))
 
     course: Mapped[Course] = relationship(back_populates="assignments")
     blocks: Mapped[list[ScheduleBlock]] = relationship(

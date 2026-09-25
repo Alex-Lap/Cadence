@@ -3,11 +3,11 @@
 These are written before the implementation on purpose: they are the spec.
 """
 
-from datetime import date, time
+from datetime import date, time, timedelta
 
 import pytest
 
-from app.scheduler.core import DayCapacity, Task, build_schedule
+from app.scheduler.core import Block, DayCapacity, Task, build_schedule
 
 
 def cap(days: int, hours: float = 4.0, start: date = date(2026, 9, 14)) -> list[DayCapacity]:
@@ -101,3 +101,94 @@ def test_spread_leaves_buffer_before_the_deadline():
     days = sorted({b.day for b in plan.blocks})
     assert days[0] <= date(2026, 9, 16), "should start early in the window"
     assert len(days) >= 3, "should span several days"
+
+
+def test_exam_study_does_not_start_months_early():
+    """The complaint that prompted this: a December final was being studied for
+    in September, because it had a due date and no handout date."""
+    tasks = [
+        Task(id="final", title="Final Exam", due=date(2026, 12, 11), hours=20, weight=0.3)
+    ]
+    caps = [
+        DayCapacity(day=date(2026, 9, 14) + timedelta(days=i), start=time(18, 0), max_hours=4)
+        for i in range(120)
+    ]
+    plan = build_schedule(tasks, caps)
+    assert plan.blocks
+    assert min(b.day for b in plan.blocks) >= date(2026, 11, 20)
+
+
+def test_handout_still_wins_when_it_is_later_than_the_lead_cap():
+    tasks = [
+        Task(
+            id="p",
+            title="Late handout",
+            due=date(2026, 10, 30),
+            hours=6,
+            earliest_start=date(2026, 10, 26),
+        )
+    ]
+    caps = [
+        DayCapacity(day=date(2026, 10, 1) + timedelta(days=i), start=time(18, 0), max_hours=4)
+        for i in range(40)
+    ]
+    plan = build_schedule(tasks, caps)
+    assert min(b.day for b in plan.blocks) >= date(2026, 10, 26)
+
+
+def test_no_block_is_a_useless_sliver():
+    """Every block should be long enough to be worth sitting down for, and long
+    enough for the calendar to render its label."""
+    tasks = [
+        Task(id="a", title="A", due=date(2026, 9, 25), hours=7.25),
+        Task(id="b", title="B", due=date(2026, 9, 27), hours=4.75),
+    ]
+    plan = build_schedule(tasks, cap(14, hours=4))
+    assert plan.blocks
+    assert min(b.hours for b in plan.blocks) >= 1.0
+
+
+def test_hours_are_still_fully_placed_after_merging_remainders():
+    tasks = [Task(id="a", title="A", due=date(2026, 9, 24), hours=7.25)]
+    plan = build_schedule(tasks, cap(14, hours=4))
+    assert sum(b.hours for b in plan.blocks) == pytest.approx(7.25, abs=0.25)
+    assert not plan.unscheduled
+
+
+def _overlaps(plan):
+    from datetime import datetime as _dt
+    by_day = {}
+    for b in plan.blocks:
+        start = _dt.combine(b.day, b.start_time)
+        by_day.setdefault(b.day, []).append((start, start + timedelta(hours=b.hours), b))
+    bad = []
+    for spans in by_day.values():
+        spans.sort(key=lambda s: s[0])
+        for (s1, e1, b1), (s2, e2, b2) in zip(spans, spans[1:]):
+            if s2 < e1:
+                bad.append((b1, b2))
+    return bad
+
+
+def test_no_two_blocks_overlap_after_remainders_are_merged():
+    """Regression: merging a remainder into a block made it longer without moving
+    the block after it. The calendar then drew them side by side, squished."""
+    tasks = [
+        Task(id="a", title="A", due=date(2026, 9, 24), hours=7.25),
+        Task(id="b", title="B", due=date(2026, 9, 24), hours=5.5),
+        Task(id="c", title="C", due=date(2026, 9, 26), hours=3.25),
+    ]
+    plan = build_schedule(tasks, cap(14, hours=4))
+    assert _overlaps(plan) == []
+
+
+def test_unpinned_blocks_flow_around_a_pinned_one():
+    pinned = [
+        Block(task_id="a", title="A", day=date(2026, 9, 14),
+              start_time=time(19, 0), hours=2, pinned=True)
+    ]
+    tasks = [Task(id="b", title="B", due=date(2026, 9, 14), hours=2)]
+    plan = build_schedule(tasks, cap(1, hours=4), pinned=pinned)
+    assert _overlaps(plan) == []
+    pinned_after = [b for b in plan.blocks if b.pinned][0]
+    assert pinned_after.start_time == time(19, 0)

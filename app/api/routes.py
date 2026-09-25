@@ -12,21 +12,30 @@ the same way afterwards, whether triggered by an upload, a corrected date, or
 
 from __future__ import annotations
 
+import json
 import uuid
-from datetime import date, datetime, timezone
+from collections.abc import Iterator
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent.graph import build_graph, key_for
 from app.agent.tools.parse_syllabus import extract_text
 from app.config import get_settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.models import Assignment, Availability, Course, ScheduleBlock, User
 from app.scheduler.capacity import build_capacity
 from app.scheduler.core import Block, Task, build_schedule
-from app.schemas import AssignmentOut, AssignmentPatch, ScheduleBlockOut, ScheduleOut
+from app.schemas import (
+    AssignmentOut,
+    AssignmentPatch,
+    BlockPatch,
+    ScheduleBlockOut,
+    ScheduleOut,
+)
 
 router = APIRouter()
 
@@ -182,6 +191,51 @@ def _reschedule(db: Session, user: User) -> dict:
     }
 
 
+def _persist_extraction(db: Session, user: User, extraction, hours: dict) -> list[str]:
+    """Write courses and assignments. Returns the course codes written.
+
+    Nothing is dropped: categories and undated items are stored with their flags
+    so the user can correct them. Flushes but does not commit.
+    """
+    codes: list[str] = []
+    for parsed in extraction.courses:
+        # Re-uploading a syllabus means "this course, again" -- replace it rather
+        # than stacking a second copy (which doubled every hour on the calendar).
+        for stale in db.scalars(
+            select(Course).where(Course.user_id == user.id, Course.code == parsed.code)
+        ):
+            db.delete(stale)
+        db.flush()
+
+        course = Course(
+            user_id=user.id, code=parsed.code, title=parsed.title, term=parsed.term
+        )
+        db.add(course)
+        db.flush()
+        codes.append(parsed.code)
+
+        for item in parsed.assignments:
+            db.add(
+                Assignment(
+                    course_id=course.id,
+                    title=item.title,
+                    due_at=item.due_at,
+                    available_at=item.available_at,
+                    weight=item.weight,
+                    estimated_hours=hours.get(key_for(parsed.code, item.title), 2.0),
+                    notes=item.notes,
+                    is_category=item.is_category,
+                )
+            )
+    db.flush()
+    return codes
+
+
+def _sse(event: str, payload: dict) -> str:
+    """One server-sent event. The blank line terminates the frame."""
+    return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
+
+
 def _assignment_out(a: Assignment) -> AssignmentOut:
     return AssignmentOut(
         id=str(a.id),
@@ -193,6 +247,7 @@ def _assignment_out(a: Assignment) -> AssignmentOut:
         estimated_hours=a.estimated_hours,
         needs_date=a.due_at is None and not a.is_category,
         is_category=a.is_category,
+        color=a.color,
     )
 
 
@@ -244,33 +299,7 @@ async def upload_syllabus(
         }
     )
 
-    for parsed in result["extraction"].courses:
-        course = Course(
-            user_id=user.id, code=parsed.code, title=parsed.title, term=parsed.term
-        )
-        db.add(course)
-        db.flush()
-
-        for item in parsed.assignments:
-            # Categories are stored, not dropped. A syllabus that says
-            # "Homework: 30%" with no listed assignments is information the
-            # user needs to act on, and an exam the model mislabels as a
-            # category must not disappear along with it.
-            db.add(
-                Assignment(
-                    course_id=course.id,
-                    title=item.title,
-                    due_at=item.due_at,
-                    available_at=item.available_at,
-                    weight=item.weight,
-                    estimated_hours=result["hours"].get(
-                        key_for(parsed.code, item.title), 2.0
-                    ),
-                    notes=item.notes,
-                    is_category=item.is_category,
-                )
-            )
-    db.flush()
+    codes = _persist_extraction(db, user, result["extraction"], result["hours"])
 
     summary = _reschedule(db, user)
     db.commit()
@@ -278,9 +307,94 @@ async def upload_syllabus(
     return {
         "user_id": str(user.id),
         "trace": result.get("trace", []),
-        "courses": [c.code for c in result["extraction"].courses],
+        "courses": codes,
         **summary,
     }
+
+
+def _syllabus_events(
+    text: str, external_id: str, term_start: date, credit_hours: float
+) -> Iterator[str]:
+    """Run the agent, emitting one event per completed node, then schedule.
+
+    This opens its own Session rather than taking Depends(get_db). Since FastAPI
+    0.106 a yield-dependency's teardown runs before the response body is sent, so
+    a session from get_db would already be closed by the time this generator runs.
+    """
+    db = SessionLocal()
+    try:
+        user = _get_or_create_user(db, external_id)
+        db.commit()
+        yield _sse("start", {"user_id": str(user.id)})
+
+        state: dict = {}
+        for update in build_graph().stream(
+            {
+                "syllabus_text": text,
+                "term_start": term_start,
+                "credit_hours": credit_hours,
+            },
+            stream_mode="updates",
+        ):
+            for node, delta in update.items():
+                state.update(delta)
+                yield _sse("node", {"node": node, "trace": delta.get("trace", [])})
+
+        codes = _persist_extraction(db, user, state["extraction"], state.get("hours", {}))
+        yield _sse("persisted", {"courses": codes})
+
+        summary = _reschedule(db, user)
+        db.commit()
+        yield _sse("scheduled", summary)
+        yield _sse("done", {"user_id": str(user.id)})
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        # The 200 and its headers are long gone, so a mid-stream failure can only
+        # be reported as an event. Clients must handle this, not just onerror.
+        yield _sse("error", {"detail": f"{type(exc).__name__}: {exc}"})
+    finally:
+        db.close()
+
+
+@router.post("/syllabus/stream")
+async def upload_syllabus_stream(
+    file: UploadFile = File(...),
+    external_id: str = Form("demo"),
+    term_start: str | None = Form(None),
+    credit_hours: float = Form(3.0),
+):
+    """Same work as POST /syllabus, streamed as server-sent events.
+
+    Validation happens here, before the stream opens, so a bad upload gets a real
+    4xx rather than a 200 whose body says it failed.
+
+    This is a POST, so EventSource cannot consume it -- the client uses fetch()
+    and reads response.body. The alternative (POST returning a job id, then an
+    EventSource GET) needs a job store for no benefit at this scale.
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "Empty upload.")
+    try:
+        text = extract_text(raw)
+    except ValueError as exc:
+        raise HTTPException(415, str(exc)) from exc
+    if not text.strip():
+        raise HTTPException(
+            422,
+            "No text layer found. Scanned PDFs need OCR, which isn't supported yet.",
+        )
+
+    start = date.fromisoformat(term_start) if term_start else date.today()
+    return StreamingResponse(
+        _syllabus_events(text, external_id, start, credit_hours),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/assignments", response_model=list[AssignmentOut])
@@ -335,6 +449,75 @@ def patch_assignment(
     return _assignment_out(row)
 
 
+@router.patch("/blocks/{block_id}", response_model=ScheduleBlockOut)
+def patch_block(
+    block_id: uuid.UUID,
+    patch: BlockPatch,
+    external_id: str = "demo",
+    db: Session = Depends(get_db),
+):
+    """Move a block. Any edit pins it.
+
+    Pinning is the whole point: a dragged block is a commitment, so the next
+    reschedule leaves it alone and charges its hours against the assignment
+    instead of planning them again.
+    """
+    user = _require_user(db, external_id)
+    row = db.get(ScheduleBlock, block_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(404, "No such block.")
+
+    fields = patch.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(422, "Nothing to change.")
+    if fields.get("hours") is not None and fields["hours"] < 0.25:
+        # The calendar's smallest step. Anything shorter can't be placed on the
+        # 15-minute grid or labelled.
+        raise HTTPException(422, "A study block must be at least 15 minutes.")
+
+    new_day = fields.get("day") or row.day
+    new_start = fields.get("start_time") or row.start_time
+    new_hours = fields.get("hours") or row.hours
+    start_dt = datetime.combine(new_day, new_start)
+    end_dt = start_dt + timedelta(hours=new_hours)
+
+    # Pinned blocks are never moved by the scheduler, so two pinned blocks that
+    # overlap would stay overlapped forever. Refuse the drop instead.
+    for other in db.scalars(
+        select(ScheduleBlock).where(
+            ScheduleBlock.user_id == user.id,
+            ScheduleBlock.pinned.is_(True),
+            ScheduleBlock.day == new_day,
+            ScheduleBlock.id != row.id,
+        )
+    ):
+        o_start = datetime.combine(other.day, other.start_time)
+        o_end = o_start + timedelta(hours=other.hours)
+        if start_dt < o_end and o_start < end_dt:
+            raise HTTPException(
+                409,
+                f"That overlaps another pinned block "
+                f"({o_start:%-I:%M}–{o_end:%-I:%M %p}). Move it somewhere free.",
+            )
+
+    for name, value in fields.items():
+        if value is not None:
+            setattr(row, name, value)
+    row.pinned = True
+
+    db.commit()
+    db.refresh(row)
+    return ScheduleBlockOut(
+        id=str(row.id),
+        assignment_id=str(row.assignment_id) if row.assignment_id else None,
+        assignment_title=row.assignment.title if row.assignment else None,
+        day=row.day,
+        start_time=row.start_time,
+        hours=row.hours,
+        pinned=row.pinned,
+    )
+
+
 @router.post("/reschedule")
 def reschedule(external_id: str = "demo", db: Session = Depends(get_db)):
     """Rebuild the schedule from what's in the database. No LLM call."""
@@ -360,6 +543,20 @@ def list_courses(external_id: str = "demo", db: Session = Depends(get_db)):
     ]
 
 
+@router.delete("/courses/{course_id}")
+def delete_course(course_id: uuid.UUID, external_id: str = "demo", db: Session = Depends(get_db)):
+    """Remove a course with its assignments and blocks, then rebuild."""
+    user = _require_user(db, external_id)
+    course = db.get(Course, course_id)
+    if course is None or course.user_id != user.id:
+        raise HTTPException(404, "No such course.")
+    db.delete(course)
+    db.flush()
+    summary = _reschedule(db, user)
+    db.commit()
+    return summary
+
+
 @router.get("/schedule", response_model=ScheduleOut)
 def get_schedule(external_id: str = "demo", db: Session = Depends(get_db)):
     user = _require_user(db, external_id)
@@ -370,6 +567,7 @@ def get_schedule(external_id: str = "demo", db: Session = Depends(get_db)):
     )
     blocks = [
         ScheduleBlockOut(
+            id=str(b.id),
             assignment_id=str(b.assignment_id) if b.assignment_id else None,
             assignment_title=b.assignment.title if b.assignment else None,
             day=b.day,

@@ -1,0 +1,143 @@
+/*
+ * react-big-calendar, restyled for the Cadence palette.
+ *
+ * Imported by ScheduleCalendar AFTER the library's own CSS so these win on
+ * source order rather than on specificity games.
+ */
+
+.cad-cal .rbc-calendar { color: var(--color-fg); font-family: var(--font-sans); }
+
+/* ---------------- toolbar */
+.cad-cal .rbc-toolbar { gap: 8px; margin-bottom: 10px; }
+.cad-cal .rbc-toolbar-label {
+  font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--color-fg);
+}
+.cad-cal .rbc-toolbar button {
+  color: var(--color-muted);
+  background: var(--color-raised);
+  border: 1px solid var(--color-line);
+  font-size: 12px; padding: 5px 11px; cursor: pointer;
+}
+.cad-cal .rbc-toolbar button:hover { color: var(--color-fg); background: #232935; }
+.cad-cal .rbc-toolbar button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.cad-cal .rbc-toolbar button.rbc-active,
+.cad-cal .rbc-toolbar button.rbc-active:hover {
+  color: var(--color-ground); background: var(--color-accent); border-color: var(--color-accent);
+  box-shadow: none;
+}
+
+/* ---------------- grid */
+.cad-cal .rbc-time-view,
+.cad-cal .rbc-agenda-view {
+  border: 1px solid var(--color-line); border-radius: 10px; overflow: hidden;
+  background: var(--color-surface);
+}
+.cad-cal .rbc-time-header { border-bottom: 1px solid var(--color-line); }
+.cad-cal .rbc-time-header-content { border-left: 1px solid var(--color-line); }
+.cad-cal .rbc-header {
+  border-bottom: none; border-left-color: var(--color-line);
+  padding: 10px 4px; font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-muted);
+}
+.cad-cal .rbc-header + .rbc-header { border-left: 1px solid var(--color-line); }
+.cad-cal .rbc-today { background: rgba(138, 184, 255, 0.05); }
+.cad-cal .rbc-header.rbc-today { color: var(--color-accent); }
+
+/* The all-day row is always empty here; it only steals height. */
+.cad-cal .rbc-allday-cell { display: none; }
+.cad-cal .rbc-time-header-gutter,
+.cad-cal .rbc-time-header-content > .rbc-row.rbc-row-resource { border: none; }
+
+.cad-cal .rbc-time-content { border-top: none; }
+.cad-cal .rbc-time-content > * + * > * { border-left: 1px solid var(--color-line); }
+.cad-cal .rbc-timeslot-group {
+  /* Set by ScheduleCalendar from the measured grid height, so the visible
+     hours fill the space exactly and the grid never scrolls. */
+  min-height: var(--hour-px, 60px);
+  height: var(--hour-px, 60px);
+  flex: none;
+  border-bottom: 1px solid var(--color-line);
+}
+.cad-cal .rbc-day-slot .rbc-time-slot { border-top: none; }
+.cad-cal .rbc-day-slot .rbc-time-slot:nth-child(3) { border-top: 1px dashed rgba(38, 44, 54, 0.7); }
+.cad-cal .rbc-time-gutter .rbc-timeslot-group { border-bottom-color: transparent; }
+.cad-cal .rbc-label {
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--color-faint); padding: 0 8px;
+}
+.cad-cal .rbc-current-time-indicator { background: var(--color-accent); height: 2px; }
+
+/* ---------------- events */
+/* The library keeps a 10px strip on the right of each day column for
+   click-to-create, which this app doesn't use. Give it back to the blocks. */
+.cad-cal .rbc-day-slot .rbc-events-container { margin-right: 2px; }
+
+.cad-cal .rbc-event,
+.cad-cal .rbc-day-slot .rbc-background-event {
+  padding: 0; border: none; border-radius: 6px; overflow: hidden;
+}
+.cad-cal .rbc-day-slot .rbc-event { border: none; }
+/* The library's own "6:00 PM – 8:00 PM" line. It sits above the title and is
+   what didn't fit; the event card renders its own compact range instead. */
+.cad-cal .rbc-event-label { display: none; }
+.cad-cal .rbc-event-content { height: 100%; }
+.cad-cal .rbc-event:focus { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.cad-cal .rbc-selected { filter: brightness(1.15); }
+
+.cad-event {
+  height: 100%; padding: 5px 8px 5px 9px;
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.cad-event-title {
+  font-size: 12px; line-height: 15px; font-weight: 600; color: var(--color-fg);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
+}
+.cad-event-time {
+  font-family: var(--font-mono); font-size: 10.5px; line-height: 13px;
+  color: rgba(232, 234, 239, 0.68);
+  /* Wraps rather than truncates: "6:00–7:30pm" then "· 1.5h" on the next line
+     in a narrow column. A cut-off time range is worse than a second line. */
+}
+.cad-event-time span { white-space: nowrap; }
+/* 30 minutes (60px): tighter padding, time on a single line. */
+.cad-event.is-compact { padding: 4px 6px 4px 8px; gap: 1px; }
+.cad-event.is-compact .cad-event-time { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 15 minutes (30px): the title on one line, vertically centred. The time is
+   where the block sits in the grid; the full text is in the hover tooltip. */
+.cad-event.is-tiny { padding: 2px 10px 2px 8px; justify-content: center; }
+.cad-event.is-tiny .cad-event-title {
+  /* Two 12px lines fit in a 30px block, which is enough for a full course
+     assignment name at laptop width ("Project 2: Bloom / Filters"). */
+  font-size: 10.5px; line-height: 12px; -webkit-line-clamp: 2 !important;
+}
+.cad-event.is-tiny .cad-pin { top: 4px; right: 4px; width: 5px; height: 5px; }
+.cad-pin {
+  position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%;
+}
+
+/* ---------------- agenda */
+.cad-cal .rbc-agenda-view table.rbc-agenda-table { border: none; color: var(--color-fg); }
+.cad-cal .rbc-agenda-view table.rbc-agenda-table thead > tr > th {
+  border-bottom: 1px solid var(--color-line); color: var(--color-muted);
+  font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.cad-cal .rbc-agenda-view table.rbc-agenda-table tbody > tr > td + td,
+.cad-cal .rbc-agenda-view table.rbc-agenda-table tbody > tr + tr { border-color: var(--color-line); }
+.cad-cal .rbc-agenda-time-cell,
+.cad-cal .rbc-agenda-date-cell { font-family: var(--font-mono); font-size: 12px; color: var(--color-muted); }
+
+/* ---------------- drag and drop */
+.cad-cal .rbc-addons-dnd .rbc-addons-dnd-resize-ns-anchor .rbc-addons-dnd-resize-ns-icon {
+  border-top-color: rgba(232, 234, 239, 0.6);
+}
+.cad-cal .rbc-addons-dnd-drag-preview { opacity: 0.85; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cad-cal * { transition: none !important; }
+}
+
+/* When the hours fit, there's nothing to scroll -- hide the scrollbar gutter the
+   library reserves. If the window is too short to fit them legibly, it scrolls. */
+.cad-cal[data-fits] .rbc-time-content { overflow-y: hidden; }
+.cad-cal[data-fits] .rbc-time-header { margin-right: 0 !important; }

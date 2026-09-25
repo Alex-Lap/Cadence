@@ -9,3 +9,5 @@ __pycache__
 .env
 node_modules
 .DS_Store
+# Next.js app is built and deployed separately from the API image.
+web

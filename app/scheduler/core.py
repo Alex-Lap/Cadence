@@ -17,6 +17,12 @@ EPS = 1e-9
 # Blocks are rounded to this, so the calendar shows 1.75h rather than 1.7142857h.
 QUANTUM = 0.25
 
+# Nobody studies for a December final in September. Work does not begin more
+# than this far before its deadline, whatever the handout date says. It also
+# matches the common "handed out three weeks before it's due" pattern, so it
+# rarely binds on projects and almost always binds on exams.
+MAX_LEAD_DAYS = 21
+
 # How long a useful sitting is. The scheduler spreads a task over as many days
 # as it needs at roughly this size, instead of smearing it across every
 # available day -- 30 minutes on five projects a night is not a study plan.
@@ -101,12 +107,44 @@ def _advance(t: time, hours: float) -> time:
     return moved.time().replace(second=0, microsecond=0)
 
 
+def _relayout(blocks: list[Block], day_start: dict[date, time]) -> None:
+    """Give every block on a day a start time that overlaps nothing else.
+
+    Hours can change after a block is placed -- a small remainder gets merged
+    into it -- which leaves it running into whatever was placed after it. Rather
+    than patch cursors everywhere hours are adjusted, lay each day out once at
+    the end: pinned blocks keep the time the user chose, everything else is
+    packed in order around them.
+    """
+    by_day: dict[date, list[Block]] = {}
+    for b in blocks:
+        by_day.setdefault(b.day, []).append(b)
+
+    for day, items in by_day.items():
+        fixed = [b for b in items if b.pinned]
+        movable = sorted((b for b in items if not b.pinned), key=lambda b: b.start_time)
+        cursor = day_start.get(day, min(b.start_time for b in items))
+        for b in movable:
+            collided = True
+            while collided:
+                collided = False
+                end = _advance(cursor, b.hours)
+                for f in fixed:
+                    f_end = _advance(f.start_time, f.hours)
+                    if cursor < f_end and f.start_time < end:
+                        cursor = f_end
+                        collided = True
+            b.start_time = cursor
+            cursor = _advance(cursor, b.hours)
+
+
 def build_schedule(
     tasks: list[Task],
     capacity: list[DayCapacity],
     *,
     pinned: list[Block] | None = None,
-    min_block_hours: float = 0.5,
+    min_block_hours: float = 1.0,
+    max_lead_days: int = MAX_LEAD_DAYS,
 ) -> Plan:
     """Assign each task's hours to days on or before its due date.
 
@@ -145,12 +183,15 @@ def build_schedule(
     # Earliest deadline first; heavier assignments win ties.
     for task in sorted(tasks, key=lambda t: (t.due, -(t.weight or 0.0))):
         left = task.hours
+
+        # Start no earlier than the handout, and no earlier than the lead cap.
+        lead_bound = task.due - timedelta(days=max_lead_days)
+        begin = max(lead_bound, task.earliest_start or lead_bound)
+
         eligible = [
             c.day
             for c in days
-            if c.day <= task.due
-            and (task.earliest_start is None or c.day >= task.earliest_start)
-            and remaining[c.day] > EPS
+            if begin <= c.day <= task.due and remaining[c.day] > EPS
         ]
 
         # Pass 1 -- spread over as many days as the work needs at roughly
@@ -173,15 +214,29 @@ def build_schedule(
                     place(task, day, take)
                     left -= take
 
-        # Pass 2 -- mop up whatever the spread left behind, earliest first.
+        # Pass 2 -- mop up whatever the spread left behind, earliest first, but
+        # only in useful amounts.
         if left > EPS:
             for day in eligible:
                 if left <= EPS:
                     break
                 take = min(remaining[day], left)
-                if take > EPS:
-                    place(task, day, take)
-                    left -= take
+                if take >= min_block_hours - EPS:
+                    place(task, day, _round_q(min(take, left)))
+                    left = max(0.0, left - take)
+
+        # Pass 3 -- a remainder too small to be its own sitting is added to an
+        # existing block for the same task rather than left as a 15-minute stub.
+        if EPS < left < min_block_hours:
+            for block in sorted(
+                (b for b in plan.blocks if b.task_id == task.id),
+                key=lambda b: -b.hours,
+            ):
+                if remaining[block.day] >= left - EPS:
+                    block.hours = _round_q(block.hours + left)
+                    remaining[block.day] -= left
+                    left = 0.0
+                    break
 
         # Still hours left? The window is genuinely overcommitted. Keep the
         # partial placement -- doing some of it beats doing none -- but be
@@ -189,6 +244,7 @@ def build_schedule(
         if left > EPS:
             plan.unscheduled.append(task.title)
 
+    _relayout(plan.blocks, {c.day: c.start for c in days})
     plan.blocks.sort(key=lambda b: (b.day, b.start_time))
     return plan
 

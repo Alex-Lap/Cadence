@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+/*
+ * Cadence palette. Dark by design, not by media query: the calendar is the
+ * product, and colour-coded study blocks read best on a deep, slightly blue
+ * ground. Neutrals lean cool so the course hues carry all the colour.
+ */
+@theme {
+  --color-ground: #0d1015;
+  --color-surface: #151920;
+  --color-raised: #1c212a;
+  --color-line: #262c36;
+  --color-fg: #e8eaef;
+  --color-muted: #8c95a5;
+  --color-faint: #5a6272;
+  --color-accent: #8ab8ff;
+  --color-warn: #f2b660;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+}
+
+html {
+  color-scheme: dark; /* native date pickers and scrollbars follow the palette */
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+}
