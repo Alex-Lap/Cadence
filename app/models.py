@@ -1,5 +1,5 @@
-"""SQLAlchemy models. Week 1 data model: User, Course, Assignment,
-Availability, ScheduleBlock."""
+"""SQLAlchemy models: User, Course, Assignment, Availability, Commitment,
+ScheduleBlock."""
 
 from __future__ import annotations
 
@@ -25,9 +25,17 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(320))
     timezone: Mapped[str] = mapped_column(String(64), default="America/New_York")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Study window and daily cap. Null means "use the defaults" (18:00, open
+    # ended, settings.max_hours_per_day), so nothing changes until they're set.
+    study_start: Mapped[time | None] = mapped_column(Time)
+    study_end: Mapped[time | None] = mapped_column(Time)
+    max_hours_per_day: Mapped[float | None] = mapped_column(Float)
 
     courses: Mapped[list[Course]] = relationship(back_populates="user", cascade="all, delete-orphan")
     availability: Mapped[list[Availability]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    commitments: Mapped[list[Commitment]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -46,6 +54,11 @@ class Course(Base):
 
     user: Mapped[User] = relationship(back_populates="courses")
     assignments: Mapped[list[Assignment]] = relationship(
+        back_populates="course", cascade="all, delete-orphan"
+    )
+    # Lecture times. They belong to the course, so removing or re-uploading a
+    # course takes its meetings with it.
+    commitments: Mapped[list[Commitment]] = relationship(
         back_populates="course", cascade="all, delete-orphan"
     )
 
@@ -92,6 +105,34 @@ class Availability(Base):
     max_hours: Mapped[float | None] = mapped_column(Float)  # cap for this day
 
     user: Mapped[User] = relationship(back_populates="availability")
+
+
+class Commitment(Base):
+    """Time the user is busy: a lecture, a shift, a one-off appointment.
+
+    Either recurring (`weekday`, optionally bounded by `starts_on`/`ends_on`, e.g.
+    the term) or one-off (`on_date`). Free time is the study window minus these.
+    """
+
+    __tablename__ = "commitments"
+
+    id: Mapped[uuid.UUID] = _pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(16), default="other")      # class | work | other
+    source: Mapped[str] = mapped_column(String(16), default="manual")   # syllabus | manual | ics
+    weekday: Mapped[int | None] = mapped_column(Integer)                # 0 = Monday
+    on_date: Mapped[date | None] = mapped_column(Date)
+    starts_on: Mapped[date | None] = mapped_column(Date)
+    ends_on: Mapped[date | None] = mapped_column(Date)
+    start_time: Mapped[time] = mapped_column(Time)
+    end_time: Mapped[time] = mapped_column(Time)
+
+    user: Mapped[User] = relationship(back_populates="commitments")
+    course: Mapped[Course | None] = relationship(back_populates="commitments")
 
 
 class ScheduleBlock(Base):

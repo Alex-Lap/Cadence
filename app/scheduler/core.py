@@ -7,7 +7,7 @@ Swappable for OR-Tools later behind the same signature.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import ceil
 from datetime import date, datetime, time, timedelta
 
@@ -16,6 +16,7 @@ EPS = 1e-9
 
 # Blocks are rounded to this, so the calendar shows 1.75h rather than 1.7142857h.
 QUANTUM = 0.25
+QUANTUM_MIN = 15
 
 # Nobody studies for a December final in September. Work does not begin more
 # than this far before its deadline, whatever the handout date says. It also
@@ -43,9 +44,48 @@ class Task:
 
 @dataclass
 class DayCapacity:
+    """When study can happen on one day.
+
+    `start`-`end` is the study window; `busy` holds commitments inside it
+    (lectures, work) that study must go around. `max_hours` caps the total even
+    if more free time exists. Without `end` or `busy`, the day is one open
+    stretch from `start`, which is how every day worked before commitments.
+    """
+
     day: date
     start: time
     max_hours: float
+    end: time | None = None
+    busy: list[tuple[time, time]] = field(default_factory=list)
+
+    def free_segments(self, extra: list[tuple[int, int]] = ()) -> list[list[int]]:
+        """Free stretches as [start, end] in minutes after midnight, snapped
+        to the 15-minute grid, with anything shorter than 15 minutes dropped."""
+        lo = _minutes(self.start)
+        hi = _minutes(self.end) if self.end else 24 * 60 - 1
+        obstacles = sorted([(_minutes(a), _minutes(b)) for a, b in self.busy] + list(extra))
+        segments: list[list[int]] = []
+        cursor = lo
+        for a, b in obstacles:
+            if b <= cursor or a >= hi:
+                continue
+            if a > cursor:
+                segments.append([cursor, min(a, hi)])
+            cursor = max(cursor, b)
+        if cursor < hi:
+            segments.append([cursor, hi])
+        snapped = []
+        for a, b in segments:
+            a = -(-a // QUANTUM_MIN) * QUANTUM_MIN  # round start up to the grid
+            b = b // QUANTUM_MIN * QUANTUM_MIN  # round end down
+            if b - a >= QUANTUM_MIN:
+                snapped.append([a, b])
+        return snapped
+
+    def capacity_hours(self) -> float:
+        """Hours actually available: the free time, capped at max_hours."""
+        free = sum(b - a for a, b in self.free_segments()) / 60
+        return min(self.max_hours, free)
 
 
 @dataclass
@@ -97,6 +137,15 @@ def _pick_spread(days: list[date], n: int) -> list[date]:
     return [days[i] for i in chosen]
 
 
+def _minutes(t: time) -> int:
+    return t.hour * 60 + t.minute
+
+
+def _clock(minutes: int) -> time:
+    minutes = max(0, min(minutes, 24 * 60 - 1))
+    return time(minutes // 60, minutes % 60)
+
+
 def _advance(t: time, hours: float) -> time:
     """Add `hours` to a wall-clock time, clamping at 23:59 instead of rolling
     into the next day. Clamping is a safety net, not a feature -- capacity
@@ -107,35 +156,63 @@ def _advance(t: time, hours: float) -> time:
     return moved.time().replace(second=0, microsecond=0)
 
 
-def _relayout(blocks: list[Block], day_start: dict[date, time]) -> None:
-    """Give every block on a day a start time that overlaps nothing else.
+def _relayout(blocks: list[Block], capacity: dict[date, DayCapacity]) -> list[Block]:
+    """Give every block on a day a time that overlaps nothing else.
 
-    Hours can change after a block is placed -- a small remainder gets merged
-    into it -- which leaves it running into whatever was placed after it. Rather
-    than patch cursors everywhere hours are adjusted, lay each day out once at
-    the end: pinned blocks keep the time the user chose, everything else is
-    packed in order around them.
+    Runs once, at the end, because hours change after placement (a remainder
+    merged into a block) and cursors would otherwise have to be patched
+    everywhere. Pinned blocks keep the time the user chose. Everything else is
+    poured into the day's free segments -- the study window minus commitments
+    and pinned blocks. A block goes whole into the first segment it fits; only if
+    none can hold it is it split around the obstacle ("45 minutes before the
+    lecture, the rest after").
     """
     by_day: dict[date, list[Block]] = {}
     for b in blocks:
         by_day.setdefault(b.day, []).append(b)
 
+    out: list[Block] = []
     for day, items in by_day.items():
         fixed = [b for b in items if b.pinned]
         movable = sorted((b for b in items if not b.pinned), key=lambda b: b.start_time)
-        cursor = day_start.get(day, min(b.start_time for b in items))
+        out.extend(fixed)
+        if not movable:
+            continue
+
+        cap = capacity.get(day) or DayCapacity(
+            day=day, start=min(b.start_time for b in items), max_hours=24
+        )
+        pinned_spans = [
+            (_minutes(f.start_time), _minutes(f.start_time) + round(f.hours * 60)) for f in fixed
+        ]
+        segments = cap.free_segments(pinned_spans)
+
         for b in movable:
-            collided = True
-            while collided:
-                collided = False
-                end = _advance(cursor, b.hours)
-                for f in fixed:
-                    f_end = _advance(f.start_time, f.hours)
-                    if cursor < f_end and f.start_time < end:
-                        cursor = f_end
-                        collided = True
-            b.start_time = cursor
-            cursor = _advance(cursor, b.hours)
+            need = round(b.hours * 60)
+
+            whole = next((seg for seg in segments if seg[1] - seg[0] >= need), None)
+            if whole is not None:
+                out.append(replace(b, start_time=_clock(whole[0])))
+                whole[0] += need
+                continue
+
+            for seg in segments:
+                if need <= 0:
+                    break
+                room = (seg[1] - seg[0]) // QUANTUM_MIN * QUANTUM_MIN
+                if room < QUANTUM_MIN:
+                    continue
+                take = min(room, need)
+                out.append(replace(b, start_time=_clock(seg[0]), hours=take / 60))
+                seg[0] += take
+                need -= take
+
+            if need > 0:
+                # Capacity is computed from these same segments, so this only
+                # happens through rounding. Keep the hours rather than lose them.
+                last = max([seg[1] for seg in segments] + [_minutes(cap.start)])
+                out.append(replace(b, start_time=_clock(last), hours=need / 60))
+    return out
 
 
 def build_schedule(
@@ -156,7 +233,7 @@ def build_schedule(
 
     # Mutable per-day state: how many hours are left, and where the next
     # block on that day should start.
-    remaining: dict[date, float] = {c.day: c.max_hours for c in days}
+    remaining: dict[date, float] = {c.day: c.capacity_hours() for c in days}
     cursor: dict[date, time] = {c.day: c.start for c in days}
 
     plan = Plan(blocks=list(pinned))
@@ -244,7 +321,7 @@ def build_schedule(
         if left > EPS:
             plan.unscheduled.append(task.title)
 
-    _relayout(plan.blocks, {c.day: c.start for c in days})
+    plan.blocks = _relayout(plan.blocks, {c.day: c for c in days})
     plan.blocks.sort(key=lambda b: (b.day, b.start_time))
     return plan
 

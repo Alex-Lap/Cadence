@@ -529,3 +529,112 @@ def test_rejects_a_malformed_colour(client, uploaded):
     for bad in ["red", "#fff", "e9a25b", "#gggggg"]:
         resp = client.patch(f"/api/assignments/{row['id']}", json={"color": bad})
         assert resp.status_code == 422, bad
+
+
+# ---------------------------------------------------------------- commitments
+
+
+def _blocks_on(client, day):
+    return [b for b in client.get("/api/schedule").json()["blocks"] if b["day"] == str(day)]
+
+
+def _minutes(t: str) -> int:
+    h, m, *_ = map(int, t.split(":"))
+    return h * 60 + m
+
+
+def test_no_settings_and_no_commitments_keeps_the_old_defaults(client, uploaded):
+    s = client.get("/api/settings").json()
+    assert s["study_start"] is None and s["study_end"] is None
+    assert s["effective"]["study_start"] == "18:00:00"
+    assert client.get("/api/commitments").json() == []
+
+
+def test_study_never_lands_on_a_weekly_commitment(client, uploaded):
+    client.put("/api/settings", json={"study_start": "18:00", "study_end": "23:00"})
+    for wd in range(7):
+        resp = client.post(
+            "/api/commitments",
+            json={"title": "Lecture", "kind": "class", "weekday": wd,
+                  "start_time": "18:00", "end_time": "20:40"},
+        )
+        assert resp.status_code == 201, resp.text
+    blocks = client.get("/api/schedule").json()["blocks"]
+    assert blocks
+    for b in blocks:
+        start = _minutes(b["start_time"])
+        assert start >= 20 * 60 + 45 or start + b["hours"] * 60 <= 18 * 60, b
+
+
+def test_study_window_is_respected(client, uploaded):
+    client.put("/api/settings", json={"study_start": "09:00", "study_end": "12:00",
+                                      "max_hours_per_day": 3})
+    for b in client.get("/api/schedule").json()["blocks"]:
+        start = _minutes(b["start_time"])
+        assert 9 * 60 <= start and start + b["hours"] * 60 <= 12 * 60, b
+
+
+def test_one_off_commitment_clears_its_day(client, uploaded):
+    busy_day = TODAY + timedelta(days=2)
+    client.put("/api/settings", json={"study_start": "18:00", "study_end": "22:00"})
+    client.post("/api/commitments", json={"title": "Dentist", "on_date": str(busy_day),
+                                          "start_time": "18:00", "end_time": "22:00"})
+    assert _blocks_on(client, busy_day) == []
+
+
+def test_deleting_a_commitment_frees_the_time(client, uploaded):
+    busy_day = TODAY + timedelta(days=2)
+    client.put("/api/settings", json={"study_start": "18:00", "study_end": "22:00"})
+    before = _blocks_on(client, busy_day)
+    c = client.post("/api/commitments", json={"title": "Shift", "on_date": str(busy_day),
+                                              "start_time": "18:00", "end_time": "22:00"}).json()
+    assert client.delete(f"/api/commitments/{c['id']}").status_code == 200
+    assert client.get("/api/commitments").json() == []
+    assert len(_blocks_on(client, busy_day)) == len(before)
+
+
+def test_commitment_needs_exactly_one_of_weekday_or_date(client, uploaded):
+    base = {"title": "X", "start_time": "18:00", "end_time": "19:00"}
+    assert client.post("/api/commitments", json=base).status_code == 422
+    both = {**base, "weekday": 0, "on_date": str(TODAY)}
+    assert client.post("/api/commitments", json=both).status_code == 422
+
+
+def test_commitment_must_end_after_it_starts(client, uploaded):
+    resp = client.post("/api/commitments", json={"title": "X", "weekday": 0,
+                                                  "start_time": "20:00", "end_time": "19:00"})
+    assert resp.status_code == 422
+
+
+def test_study_window_must_end_after_it_starts(client, uploaded):
+    resp = client.put("/api/settings", json={"study_start": "22:00", "study_end": "18:00"})
+    assert resp.status_code == 422
+
+
+def test_dropping_a_block_onto_a_commitment_is_refused(client, uploaded):
+    day = TODAY + timedelta(days=5)
+    client.post("/api/commitments", json={"title": "Lecture", "on_date": str(day),
+                                          "start_time": "18:00", "end_time": "20:40"})
+    first = client.get("/api/schedule").json()["blocks"][0]
+    resp = client.patch(f"/api/blocks/{first['id']}",
+                        json={"day": str(day), "start_time": "19:00:00"})
+    assert resp.status_code == 409
+    assert "Lecture" in resp.json()["detail"]
+
+
+def test_course_commitments_go_with_the_course(client, uploaded):
+    course = client.get("/api/courses").json()[0]
+    client.post("/api/commitments", json={"title": "CIS 6307 lecture", "kind": "class",
+                                          "weekday": 1, "start_time": "18:00",
+                                          "end_time": "20:40", "course_id": course["id"]})
+    listed = client.get("/api/commitments").json()
+    assert listed[0]["course_code"] == "CIS 6307"
+    client.delete(f"/api/courses/{course['id']}")
+    assert client.get("/api/commitments").json() == []
+
+
+def test_commitment_for_someone_elses_course_is_404(client, uploaded):
+    resp = client.post("/api/commitments", json={
+        "title": "X", "weekday": 0, "start_time": "18:00", "end_time": "19:00",
+        "course_id": "00000000-0000-0000-0000-000000000000"})
+    assert resp.status_code == 404

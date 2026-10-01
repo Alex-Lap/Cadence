@@ -26,15 +26,18 @@ from app.agent.graph import build_graph, key_for
 from app.agent.tools.parse_syllabus import extract_text
 from app.config import get_settings
 from app.db import SessionLocal, get_db
-from app.models import Assignment, Availability, Course, ScheduleBlock, User
-from app.scheduler.capacity import build_capacity
+from app.models import Assignment, Availability, Commitment, Course, ScheduleBlock, User
+from app.scheduler.capacity import DEFAULT_START, build_capacity, occurs_on
 from app.scheduler.core import Block, Task, build_schedule
 from app.schemas import (
     AssignmentOut,
     AssignmentPatch,
     BlockPatch,
+    CommitmentIn,
+    CommitmentOut,
     ScheduleBlockOut,
     ScheduleOut,
+    StudySettings,
 )
 
 router = APIRouter()
@@ -133,11 +136,15 @@ def _reschedule(db: Session, user: User) -> dict:
     availability = list(
         db.scalars(select(Availability).where(Availability.user_id == user.id))
     )
+    commitments = list(db.scalars(select(Commitment).where(Commitment.user_id == user.id)))
     capacity = build_capacity(
         date.today(),
         PLANNING_HORIZON_DAYS,
         availability=availability,
-        default_hours=get_settings().max_hours_per_day,
+        default_hours=user.max_hours_per_day or get_settings().max_hours_per_day,
+        window_start=user.study_start,
+        window_end=user.study_end,
+        commitments=commitments,
     )
 
     pinned_blocks = [
@@ -500,6 +507,19 @@ def patch_block(
                 f"({o_start:%-I:%M}–{o_end:%-I:%M %p}). Move it somewhere free.",
             )
 
+    # Same reasoning for commitments: a pinned block on top of a lecture would
+    # never move off it.
+    for c in db.scalars(select(Commitment).where(Commitment.user_id == user.id)):
+        if not occurs_on(c, new_day):
+            continue
+        c_start = datetime.combine(new_day, c.start_time)
+        c_end = datetime.combine(new_day, c.end_time)
+        if start_dt < c_end and c_start < end_dt:
+            raise HTTPException(
+                409,
+                f"That overlaps {c.title} ({c_start:%-I:%M}–{c_end:%-I:%M %p}).",
+            )
+
     for name, value in fields.items():
         if value is not None:
             setattr(row, name, value)
@@ -578,3 +598,116 @@ def get_schedule(external_id: str = "demo", db: Session = Depends(get_db)):
         for b in rows
     ]
     return ScheduleOut(blocks=blocks, unscheduled=[])
+
+
+# --------------------------------------------------------------------------
+# commitments and study window
+# --------------------------------------------------------------------------
+
+
+def _commitment_out(c: Commitment) -> CommitmentOut:
+    return CommitmentOut(
+        id=str(c.id),
+        title=c.title,
+        kind=c.kind,
+        source=c.source,
+        weekday=c.weekday,
+        on_date=c.on_date,
+        starts_on=c.starts_on,
+        ends_on=c.ends_on,
+        start_time=c.start_time,
+        end_time=c.end_time,
+        course_id=str(c.course_id) if c.course_id else None,
+        course_code=c.course.code if c.course else None,
+    )
+
+
+@router.get("/commitments", response_model=list[CommitmentOut])
+def list_commitments(external_id: str = "demo", db: Session = Depends(get_db)):
+    user = _require_user(db, external_id)
+    rows = db.scalars(
+        select(Commitment)
+        .where(Commitment.user_id == user.id)
+        .order_by(Commitment.weekday, Commitment.on_date, Commitment.start_time)
+    )
+    return [_commitment_out(c) for c in rows]
+
+
+@router.post("/commitments", response_model=CommitmentOut, status_code=201)
+def create_commitment(
+    body: CommitmentIn, external_id: str = "demo", db: Session = Depends(get_db)
+):
+    """Add a busy stretch and rebuild around it."""
+    user = _get_or_create_user(db, external_id)
+    course_id = None
+    if body.course_id:
+        try:
+            course = db.get(Course, uuid.UUID(body.course_id))
+        except ValueError:
+            course = None
+        if course is None or course.user_id != user.id:
+            raise HTTPException(404, "No such course.")
+        course_id = course.id
+    row = Commitment(
+        user_id=user.id,
+        course_id=course_id,
+        source="manual",
+        **body.model_dump(exclude={"course_id"}),
+    )
+    db.add(row)
+    db.flush()
+    _reschedule(db, user)
+    db.commit()
+    db.refresh(row)
+    return _commitment_out(row)
+
+
+@router.delete("/commitments/{commitment_id}")
+def delete_commitment(
+    commitment_id: uuid.UUID, external_id: str = "demo", db: Session = Depends(get_db)
+):
+    user = _require_user(db, external_id)
+    row = db.get(Commitment, commitment_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(404, "No such commitment.")
+    db.delete(row)
+    db.flush()
+    summary = _reschedule(db, user)
+    db.commit()
+    return summary
+
+
+def _settings_out(user: User) -> dict:
+    return {
+        "study_start": user.study_start,
+        "study_end": user.study_end,
+        "max_hours_per_day": user.max_hours_per_day,
+        # What the scheduler actually uses when a field is unset.
+        "effective": {
+            "study_start": user.study_start or DEFAULT_START,
+            "study_end": user.study_end,
+            "max_hours_per_day": user.max_hours_per_day or get_settings().max_hours_per_day,
+        },
+    }
+
+
+@router.get("/settings")
+def get_study_settings(external_id: str = "demo", db: Session = Depends(get_db)):
+    user = _get_or_create_user(db, external_id)
+    db.commit()
+    return _settings_out(user)
+
+
+@router.put("/settings")
+def put_study_settings(
+    body: StudySettings, external_id: str = "demo", db: Session = Depends(get_db)
+):
+    """Replace the study window and daily cap, then rebuild."""
+    user = _get_or_create_user(db, external_id)
+    user.study_start = body.study_start
+    user.study_end = body.study_end
+    user.max_hours_per_day = body.max_hours_per_day
+    db.flush()
+    _reschedule(db, user)
+    db.commit()
+    return _settings_out(user)

@@ -53,6 +53,11 @@ def engine():
         admin.dispose()
 
     eng = create_engine(url)
+    # Rebuild from the models every run. create_all alone skips tables that
+    # already exist, so a test database made before a column was added would
+    # keep the old shape forever. Nothing in it is worth keeping: each test
+    # rolls back.
+    Base.metadata.drop_all(eng)
     Base.metadata.create_all(eng)
     yield eng
     eng.dispose()

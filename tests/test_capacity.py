@@ -1,4 +1,4 @@
-from datetime import date, time
+from datetime import date, time, timedelta
 from types import SimpleNamespace
 
 from app.scheduler.capacity import build_capacity
@@ -39,3 +39,57 @@ def test_explicit_max_hours_wins_over_window_length():
 def test_zero_hour_days_are_dropped():
     caps = build_capacity(date(2026, 9, 28), 1, availability=[avail(0, "18:00", "18:00")])
     assert caps == []
+
+
+def commit(start, end, weekday=None, on_date=None, starts_on=None, ends_on=None):
+    return SimpleNamespace(
+        weekday=weekday,
+        on_date=on_date,
+        starts_on=starts_on,
+        ends_on=ends_on,
+        start_time=time.fromisoformat(start),
+        end_time=time.fromisoformat(end),
+    )
+
+
+MONDAY = date(2026, 9, 28)
+
+
+def test_defaults_are_unchanged_without_settings_or_commitments():
+    caps = build_capacity(MONDAY, 1, default_hours=4)
+    assert caps[0].start == time(18, 0) and caps[0].end is None and caps[0].busy == []
+    assert caps[0].capacity_hours() == 4
+
+
+def test_study_window_is_applied():
+    caps = build_capacity(MONDAY, 1, window_start=time(9), window_end=time(12), default_hours=8)
+    assert caps[0].start == time(9) and caps[0].end == time(12)
+    assert caps[0].capacity_hours() == 3
+
+
+def test_weekly_commitment_lands_on_its_weekday_only():
+    caps = build_capacity(MONDAY, 7, commitments=[commit("18:00", "20:40", weekday=0)])
+    busy = {c.day.weekday(): c.busy for c in caps}
+    assert busy[0] == [(time(18), time(20, 40))]
+    assert all(busy[d] == [] for d in range(1, 7))
+
+
+def test_commitment_outside_its_term_is_ignored():
+    c = commit("18:00", "20:00", weekday=0, starts_on=MONDAY + timedelta(days=7))
+    caps = build_capacity(MONDAY, 14, commitments=[c])
+    mondays = [cap for cap in caps if cap.day.weekday() == 0]
+    assert mondays[0].busy == [] and mondays[1].busy != []
+
+
+def test_one_off_commitment():
+    c = commit("19:00", "21:00", on_date=MONDAY + timedelta(days=2))
+    caps = build_capacity(MONDAY, 7, commitments=[c])
+    assert [cap.day for cap in caps if cap.busy] == [MONDAY + timedelta(days=2)]
+
+
+def test_commitments_reduce_capacity():
+    caps = build_capacity(
+        MONDAY, 1, window_start=time(18), window_end=time(23), default_hours=5,
+        commitments=[commit("18:00", "20:00", weekday=0)],
+    )
+    assert caps[0].capacity_hours() == 3

@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
 
 
 class ParsedAssignment(BaseModel):
@@ -129,3 +131,59 @@ class BlockPatch(BaseModel):
     day: date | None = None
     start_time: time | None = None
     hours: float | None = None
+
+
+# --------------------------------------------------------------- commitments
+
+
+class CommitmentIn(BaseModel):
+    """A busy stretch: weekly (`weekday`) or one-off (`on_date`), never both."""
+
+    title: str = Field(min_length=1, max_length=255)
+    kind: Literal["class", "work", "other"] = "other"
+    weekday: int | None = Field(None, ge=0, le=6, description="0 = Monday")
+    on_date: date | None = None
+    starts_on: date | None = None
+    ends_on: date | None = None
+    start_time: time
+    end_time: time
+    course_id: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self):
+        if (self.weekday is None) == (self.on_date is None):
+            raise ValueError("Give either a weekday (repeats weekly) or a date (one-off).")
+        if self.end_time <= self.start_time:
+            raise ValueError("A commitment must end after it starts.")
+        if self.starts_on and self.ends_on and self.ends_on < self.starts_on:
+            raise ValueError("ends_on is before starts_on.")
+        return self
+
+
+class CommitmentOut(BaseModel):
+    id: str
+    title: str
+    kind: str
+    source: str
+    weekday: int | None
+    on_date: date | None
+    starts_on: date | None
+    ends_on: date | None
+    start_time: time
+    end_time: time
+    course_id: str | None
+    course_code: str | None
+
+
+class StudySettings(BaseModel):
+    """When the user is willing to study. Null fields fall back to defaults."""
+
+    study_start: time | None = None
+    study_end: time | None = None
+    max_hours_per_day: float | None = Field(None, gt=0, le=24)
+
+    @model_validator(mode="after")
+    def _check(self):
+        if self.study_start and self.study_end and self.study_end <= self.study_start:
+            raise ValueError("The study window must end after it starts.")
+        return self
