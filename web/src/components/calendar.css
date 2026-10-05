@@ -141,3 +141,60 @@
    library reserves. If the window is too short to fit them legibly, it scrolls. */
 .cad-cal[data-fits] .rbc-time-content { overflow-y: hidden; }
 .cad-cal[data-fits] .rbc-time-header { margin-right: 0 !important; }
+
+/* ---------------- commitments (background events) */
+.cad-cal .rbc-day-slot .rbc-background-event {
+  opacity: 1;
+  border: none;
+  border-radius: 6px;
+  padding: 0;
+  width: 100% !important;
+  left: 0 !important;
+}
+
+/* ---------------- blocks the last update added or moved */
+@keyframes cad-flash {
+  0%, 100% { outline-color: transparent; }
+  20%, 60% { outline-color: var(--color-accent); }
+}
+.cad-cal .rbc-event.cad-changed {
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  animation: cad-flash 2.4s ease-in-out 2;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cad-cal .rbc-event.cad-changed { animation: none; outline-color: var(--color-accent); }
+}
+
+/* ---------------- past blocks already reported at a check-in */
+.cad-cal .rbc-event.cad-done { opacity: 0.45; }
+
+/* ---------------- month view */
+.cad-cal .rbc-month-view {
+  border: 1px solid var(--color-line); border-radius: 10px; overflow: hidden;
+  background: var(--color-surface);
+}
+.cad-cal .rbc-month-row + .rbc-month-row { border-top: 1px solid var(--color-line); }
+.cad-cal .rbc-month-view .rbc-header { border-bottom: 1px solid var(--color-line); }
+.cad-cal .rbc-day-bg + .rbc-day-bg { border-left: 1px solid var(--color-line); }
+.cad-cal .rbc-off-range-bg { background: rgba(0, 0, 0, 0.22); }
+.cad-cal .rbc-off-range { color: var(--color-faint); }
+.cad-cal .rbc-date-cell { padding: 4px 6px 2px; font-size: 11px; color: var(--color-muted); }
+.cad-cal .rbc-date-cell.rbc-now { color: var(--color-accent); font-weight: 600; }
+.cad-cal .rbc-month-view .rbc-event { padding: 1px 5px; border-radius: 4px; margin: 0 3px 1px; width: auto; }
+.cad-cal .rbc-show-more {
+  background: transparent; color: var(--color-muted); font-size: 10.5px; padding: 0 6px;
+}
+.cad-cal .rbc-show-more:hover { color: var(--color-fg); }
+.cad-month-event {
+  font-size: 11px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cad-month-time { font-family: var(--font-mono); font-size: 10px; color: var(--color-muted); }
+.cad-cal .rbc-day-bg.cad-dayoff {
+  background: repeating-linear-gradient(135deg, #1a1f27 0 6px, #161a21 6px 12px);
+}
+.cad-cal .rbc-overlay {
+  background: var(--color-raised); border: 1px solid var(--color-line); border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); color: var(--color-fg);
+}
+.cad-cal .rbc-overlay-header { border-bottom-color: var(--color-line); font-size: 12px; color: var(--color-muted); }

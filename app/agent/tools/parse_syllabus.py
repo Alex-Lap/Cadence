@@ -72,6 +72,9 @@ Only emit a row with is_category=true when a category has weight but you can
 find no individual dated items for it. Never invent due dates to make a
 category look schedulable -- mark it and move on.
 
+Attendance and participation are graded but involve no work to plan: emit
+them with is_participation=true and no due date, not as categories.
+
 Never invent an assignment that is not in the document.
 
 DATES vs WEEKS -- this matters:
@@ -87,7 +90,14 @@ Computing due_week: read each item's OWN handout week from the schedule and
 add the stated offset. "Project 3 handout in Week 7; due after three weeks"
 -> due_week=10. Handout weeks are often irregular (4, 5, 7, 9, 11) -- read
 every one from the document. Never assume assignments are evenly spaced, and
-never reuse the handout week as the due week."""
+never reuse the handout week as the due week.
+
+CLASS MEETINGS: also record when the class regularly meets (lectures, labs,
+discussion sections) in `meetings`, from lines like "Lecture: TR 6:00-8:40 PM,
+CSE E119". Copy the times exactly as written, converted to 24-hour, even if
+they look wrong -- a person checks them afterwards. Put the line you read them
+from in source_text. Office hours are NOT meetings. If no meeting times are
+given, leave meetings empty; never guess."""
 
 
 def parse_syllabus(pdf_text: str, *, term_start: str | None = None) -> SyllabusExtraction:

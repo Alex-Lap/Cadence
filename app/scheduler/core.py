@@ -306,7 +306,9 @@ def build_schedule(
         # existing block for the same task rather than left as a 15-minute stub.
         if EPS < left < min_block_hours:
             for block in sorted(
-                (b for b in plan.blocks if b.task_id == task.id),
+                # Never a pinned block: those are the user's (or a replan
+                # anchor), and growing one would silently move its end time.
+                (b for b in plan.blocks if b.task_id == task.id and not b.pinned),
                 key=lambda b: -b.hours,
             ):
                 if remaining[block.day] >= left - EPS:
@@ -314,6 +316,18 @@ def build_schedule(
                     remaining[block.day] -= left
                     left = 0.0
                     break
+
+        # Pass 4 -- nowhere to merge it: a short sitting beats dropping the
+        # hours. Only reached when every day in the window is nearly full.
+        if left > EPS:
+            for day in eligible:
+                if left <= EPS:
+                    break
+                take = min(remaining[day], left)
+                if take >= QUANTUM - EPS:
+                    take = min(_round_q(take), remaining[day])
+                    place(task, day, take)
+                    left = max(0.0, left - take)
 
         # Still hours left? The window is genuinely overcommitted. Keep the
         # partial placement -- doing some of it beats doing none -- but be
@@ -326,17 +340,165 @@ def build_schedule(
     return plan
 
 
+@dataclass
+class Churn:
+    """How much a replan disturbed the previous plan.
+
+    Counted over movable blocks only: pinned ones never move by definition. A
+    block is "kept" if the new plan has one for the same task at the same day,
+    time and length. Everything else in the old plan "moved"; everything else in
+    the new plan is "added".
+    """
+
+    kept: int = 0
+    moved: int = 0
+    added: int = 0
+
+
+def _sig(b: Block) -> tuple:
+    return (b.task_id, b.day, b.start_time, round(b.hours, 4))
+
+
+def churn(previous: list[Block], new: list[Block]) -> Churn:
+    pool: dict[tuple, int] = {}
+    for b in previous:
+        if not b.pinned:
+            pool[_sig(b)] = pool.get(_sig(b), 0) + 1
+    kept = 0
+    added = 0
+    for b in new:
+        if b.pinned:
+            continue
+        if pool.get(_sig(b), 0) > 0:
+            pool[_sig(b)] -= 1
+            kept += 1
+        else:
+            added += 1
+    return Churn(kept=kept, moved=sum(pool.values()), added=added)
+
+
+def _anchors(
+    previous: list[Block],
+    tasks: list[Task],
+    capacity: list[DayCapacity],
+    pinned: list[Block],
+    max_lead_days: int,
+) -> list[Block]:
+    """Previous blocks that are still valid exactly where they are.
+
+    A block stays only if its task still exists and still needs the hours, its
+    day is still available and inside the task's window, and its exact time
+    slot is still free -- inside the study window, clear of commitments, pinned
+    blocks and the other anchors, and within the day's hour cap.
+    """
+    by_task = {t.id: t for t in tasks}
+    by_day = {c.day: c for c in capacity}
+    budget = {t.id: t.hours for t in tasks}
+    taken: dict[date, list[tuple[int, int]]] = {}
+    used: dict[date, float] = {}
+    for p in pinned:
+        start = _minutes(p.start_time)
+        taken.setdefault(p.day, []).append((start, start + round(p.hours * 60)))
+        used[p.day] = used.get(p.day, 0.0) + p.hours
+
+    kept: list[Block] = []
+    for b in sorted(previous, key=lambda b: (b.day, b.start_time)):
+        task = by_task.get(b.task_id or "")
+        cap = by_day.get(b.day)
+        if b.pinned or task is None or cap is None:
+            continue
+        lead_bound = task.due - timedelta(days=max_lead_days)
+        begin = max(lead_bound, task.earliest_start or lead_bound)
+        if not begin <= b.day <= task.due:
+            continue
+        if b.hours > budget[task.id] + EPS:
+            continue
+        if used.get(b.day, 0.0) + b.hours > cap.capacity_hours() + EPS:
+            continue
+        lo = _minutes(b.start_time)
+        hi = lo + round(b.hours * 60)
+        segments = cap.free_segments(taken.get(b.day, []))
+        if not any(a <= lo and hi <= z for a, z in segments):
+            continue
+        kept.append(replace(b, pinned=True))  # immovable while the rest is placed
+        budget[task.id] -= b.hours
+        taken.setdefault(b.day, []).append((lo, hi))
+        used[b.day] = used.get(b.day, 0.0) + b.hours
+    return kept
+
+
 def replan(
-    current: Plan,
+    previous: list[Block],
     tasks: list[Task],
     capacity: list[DayCapacity],
     *,
-    unavailable_days: list[date] | None = None,
-) -> Plan:
-    """Reschedule around a disruption while minimizing churn.
+    pinned: list[Block] | None = None,
+    min_block_hours: float = 1.0,
+    max_lead_days: int = MAX_LEAD_DAYS,
+) -> tuple[Plan, Churn]:
+    """Rebuild the schedule while moving as little of the previous one as possible.
 
-    TODO(week3): keep every pinned and completed block, drop blocks on
-    unavailable days, and only re-place the freed hours. Measure churn as the
-    number of non-pinned blocks that moved; that number is the demo.
+    Every previous block that is still valid stays exactly where it was; only
+    the hours that lost their place (a new commitment, a moved due date, a new
+    assignment) are scheduled afresh. If holding those blocks in place would
+    leave work unscheduled that a clean rebuild could fit, stability loses and
+    the clean rebuild wins -- a calm plan that misses a deadline is worse.
     """
-    raise NotImplementedError
+    pinned = pinned or []
+    kw = dict(min_block_hours=min_block_hours, max_lead_days=max_lead_days)
+    fresh = build_schedule(tasks, capacity, pinned=pinned, **kw)
+
+    anchors = _anchors(previous, tasks, capacity, pinned, max_lead_days)
+    if not anchors:
+        return fresh, churn(previous, fresh.blocks)
+
+    def placed(plan: Plan) -> float:
+        return sum(b.hours for b in plan.blocks if not b.pinned)
+
+    def attempt(held_blocks: list[Block]) -> Plan:
+        anchors_now = [replace(a) for a in held_blocks]  # fresh copies each try
+        held: dict[str, float] = {}
+        for a in anchors_now:
+            held[a.task_id] = held.get(a.task_id, 0.0) + a.hours
+        rest = [
+            replace(t, hours=t.hours - held.get(t.id, 0.0))
+            for t in tasks
+            if t.hours - held.get(t.id, 0.0) > EPS
+        ]
+        plan = build_schedule(rest, capacity, pinned=pinned + anchors_now, **kw)
+        # Anchors come back marked pinned; they're ordinary blocks again.
+        ids = {id(a) for a in anchors_now}
+        for b in plan.blocks:
+            if id(b) in ids:
+                b.pinned = False
+        return plan
+
+    def window(t: Task) -> tuple[date, date]:
+        lead = t.due - timedelta(days=max_lead_days)
+        return max(lead, t.earliest_start or lead), t.due
+
+    by_title = {t.title: t for t in tasks}
+    by_id = {t.id: t for t in tasks}
+    target = placed(fresh)
+
+    # Hold everything that still fits. If that strands work a clean rebuild
+    # could place, release held blocks one at a time -- always the one whose
+    # task is due last, from inside the stranded task's window -- and retry.
+    # A tight week costs a couple of moves, not a reshuffle of the month.
+    while True:
+        stable = attempt(anchors)
+        if placed(stable) >= target - EPS:
+            return stable, churn(previous, stable.blocks)
+        stranded = [by_title[n] for n in stable.unscheduled if n in by_title]
+        victim = None
+        for t in sorted(stranded, key=lambda t: t.due):
+            lo, hi = window(t)
+            in_window = [a for a in anchors if lo <= a.day <= hi and a.task_id != t.id]
+            if in_window:
+                victim = max(
+                    in_window, key=lambda a: (by_id[a.task_id].due, a.day, a.start_time)
+                )
+                break
+        if victim is None:
+            return fresh, churn(previous, fresh.blocks)
+        anchors = [a for a in anchors if a is not victim]

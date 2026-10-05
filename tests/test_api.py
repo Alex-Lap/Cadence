@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 import app.api.routes as routes
-from app.schemas import ParsedAssignment, ParsedCourse, SyllabusExtraction
+from app.schemas import ParsedAssignment, ParsedCourse, ParsedMeeting, SyllabusExtraction
 
 TODAY = date.today()
 
@@ -35,6 +35,23 @@ def _extraction() -> SyllabusExtraction:
                 code="CIS 6307",
                 title="Internet Data Streaming",
                 term="Fall 2026",
+                # Lecture Tue/Thu, plus a lab whose end time has the kind of typo
+                # real syllabi have (a 4h40m lab).
+                meetings=[
+                    ParsedMeeting(
+                        days=["Tue", "Thu"],
+                        start_time="18:00",
+                        end_time="20:40",
+                        source_text="Lecture: TR 6:00-8:40 PM",
+                    ),
+                    ParsedMeeting(
+                        days=["Wed"],
+                        start_time="18:00",
+                        end_time="22:40",
+                        kind="lab",
+                        source_text="Lab: W 6:00-10:40 PM",
+                    ),
+                ],
                 assignments=[
                     ParsedAssignment(
                         title="Project 1",
@@ -119,7 +136,9 @@ def test_upload_persists_everything_including_categories(uploaded):
     assert uploaded["scheduled"] == 2          # only the two dated projects
     assert uploaded["blocks"] > 0
     assert uploaded["needs_date"] == ["Paper Presentation"]
-    assert sorted(uploaded["categories"]) == ["Attendance", "Final Exam"]
+    # Attendance came back as a category, but it's credit for showing up:
+    # filed as participation, so it is neither a category nor waiting on a date.
+    assert uploaded["categories"] == ["Final Exam"]
 
 
 def test_upload_stores_all_five_assignments(client, uploaded):
@@ -253,7 +272,7 @@ def test_promoting_a_category_schedules_it(client, uploaded):
 
     summary = client.post("/api/reschedule").json()
     assert summary["scheduled"] == 3
-    assert summary["categories"] == ["Attendance"]
+    assert summary["categories"] == []
 
 
 def test_reschedule_is_idempotent(client, uploaded):
@@ -355,7 +374,7 @@ def test_stream_persists_and_schedules_like_the_plain_endpoint(client, stub_agen
     scheduled = next(d for name, d in _events(resp.text) if name == "scheduled")
     assert scheduled["scheduled"] == 2
     assert scheduled["needs_date"] == ["Paper Presentation"]
-    assert sorted(scheduled["categories"]) == ["Attendance", "Final Exam"]
+    assert scheduled["categories"] == ["Final Exam"]
 
     assert len(client.get("/api/assignments").json()) == 5
     assert client.get("/api/schedule").json()["blocks"]
@@ -547,7 +566,8 @@ def test_no_settings_and_no_commitments_keeps_the_old_defaults(client, uploaded)
     s = client.get("/api/settings").json()
     assert s["study_start"] is None and s["study_end"] is None
     assert s["effective"]["study_start"] == "18:00:00"
-    assert client.get("/api/commitments").json() == []
+    # Only the syllabus's unconfirmed meetings exist; nothing the scheduler uses.
+    assert all(not c["confirmed"] for c in client.get("/api/commitments").json())
 
 
 def test_study_never_lands_on_a_weekly_commitment(client, uploaded):
@@ -589,7 +609,7 @@ def test_deleting_a_commitment_frees_the_time(client, uploaded):
     c = client.post("/api/commitments", json={"title": "Shift", "on_date": str(busy_day),
                                               "start_time": "18:00", "end_time": "22:00"}).json()
     assert client.delete(f"/api/commitments/{c['id']}").status_code == 200
-    assert client.get("/api/commitments").json() == []
+    assert c["id"] not in {x["id"] for x in client.get("/api/commitments").json()}
     assert len(_blocks_on(client, busy_day)) == len(before)
 
 
@@ -638,3 +658,282 @@ def test_commitment_for_someone_elses_course_is_404(client, uploaded):
         "title": "X", "weekday": 0, "start_time": "18:00", "end_time": "19:00",
         "course_id": "00000000-0000-0000-0000-000000000000"})
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------- syllabus meetings
+
+
+def _pending(client):
+    return [c for c in client.get("/api/commitments").json() if not c["confirmed"]]
+
+
+def test_upload_stores_meetings_unconfirmed(client, uploaded):
+    rows = client.get("/api/commitments").json()
+    assert sorted((c["title"], c["weekday"]) for c in rows) == [
+        ("CIS 6307", 1), ("CIS 6307", 3), ("CIS 6307 lab", 2)
+    ]
+    assert all(not c["confirmed"] and c["source"] == "syllabus" for c in rows)
+    assert all(c["course_code"] == "CIS 6307" for c in rows)
+    assert rows[0]["note"]
+
+
+def test_suspicious_meeting_is_flagged(client, uploaded):
+    by_title = {c["title"]: c for c in _pending(client)}
+    assert "4h40m" in by_title["CIS 6307 lab"]["warning"]
+    assert by_title["CIS 6307"]["warning"] is None
+
+
+def test_unconfirmed_meetings_do_not_block_study(client, uploaded):
+    """Until confirmed, a meeting is a guess; the schedule ignores it."""
+    client.put("/api/settings", json={"study_start": "18:00", "study_end": "21:00"})
+
+    def shape():
+        return [(b["day"], b["start_time"], b["hours"])
+                for b in client.get("/api/schedule").json()["blocks"]]
+
+    with_pending = shape()
+    for c in _pending(client):
+        client.delete(f"/api/commitments/{c['id']}")
+    assert shape() == with_pending
+
+
+def test_confirming_a_meeting_schedules_around_it(client, uploaded):
+    client.put("/api/settings", json={"study_start": "18:00", "study_end": "23:00"})
+    for c in _pending(client):
+        if c["title"] == "CIS 6307":
+            resp = client.patch(f"/api/commitments/{c['id']}", json={"confirmed": True})
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["confirmed"] is True
+    for b in client.get("/api/schedule").json()["blocks"]:
+        if b["pinned"]:
+            continue
+        weekday = date.fromisoformat(b["day"]).weekday()
+        if weekday in (1, 3):
+            assert _minutes(b["start_time"]) >= 20 * 60 + 45, b
+
+
+def test_correcting_and_confirming_the_typo(client, uploaded):
+    lab = next(c for c in _pending(client) if c["title"] == "CIS 6307 lab")
+    resp = client.patch(f"/api/commitments/{lab['id']}",
+                        json={"end_time": "20:40", "confirmed": True})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["end_time"] == "20:40:00" and body["warning"] is None
+
+
+def test_patch_rejects_end_before_start(client, uploaded):
+    c = _pending(client)[0]
+    resp = client.patch(f"/api/commitments/{c['id']}", json={"end_time": "17:00"})
+    assert resp.status_code == 422
+
+
+def test_reupload_replaces_meetings(client, stub_agent):
+    for _ in range(2):
+        client.post(
+            "/api/syllabus",
+            files={"file": ("s.docx", b"PK\x03\x04fake", "application/octet-stream")},
+            data={"term_start": str(TODAY - timedelta(days=30))},
+        )
+    assert len(client.get("/api/commitments").json()) == 3
+
+
+def test_meetings_start_at_term_start(client, uploaded):
+    c = client.get("/api/commitments").json()[0]
+    assert c["starts_on"] == str(TODAY - timedelta(days=30))
+
+
+# ------------------------------------------------------- participation
+
+
+def test_attendance_never_needs_input(client, monkeypatch):
+    """Attendance is graded by showing up: no date to ask for, nothing to plan --
+    even when the model files it as a category or an undated deliverable."""
+    extraction = _extraction()
+    # The stub already has "Attendance" filed as a category; add an undated one.
+    extraction.courses[0].assignments.append(
+        ParsedAssignment(title="Class Participation", weight=0.05)
+    )
+
+    class Graph(_FakeGraph):
+        def invoke(self, state):
+            return {**super().invoke(state), "extraction": extraction}
+
+    monkeypatch.setattr(routes, "build_graph", lambda: Graph())
+    monkeypatch.setattr(routes, "extract_text", lambda raw: "syllabus text")
+    resp = client.post(
+        "/api/syllabus",
+        files={"file": ("s.docx", b"PK\x03\x04fake", "application/octet-stream")},
+        data={"term_start": str(TODAY - timedelta(days=30))},
+    )
+    assert resp.status_code == 200, resp.text
+    assert "Attendance" not in resp.json()["needs_date"]
+    assert "Attendance" not in resp.json()["categories"]
+
+    rows = {a["title"]: a for a in client.get("/api/assignments").json()}
+    for t in ("Attendance", "Class Participation"):
+        assert rows[t]["is_participation"] and not rows[t]["needs_date"]
+        assert not rows[t]["is_category"]
+    waiting = {a["title"] for a in client.get("/api/assignments?needs_date=true").json()}
+    assert "Attendance" not in waiting
+
+    titles = {b["assignment_title"] for b in client.get("/api/schedule").json()["blocks"]}
+    assert "Attendance" not in titles and "Class Participation" not in titles
+
+
+# ---------------------------------------------------------------- replanning
+
+
+def _shape(client):
+    return sorted(
+        (b["assignment_id"], b["day"], b["start_time"], b["hours"])
+        for b in client.get("/api/schedule").json()["blocks"]
+        if not b["pinned"]
+    )
+
+
+def test_rebuilding_an_unchanged_plan_moves_nothing(client, uploaded):
+    before = _shape(client)
+    summary = client.post("/api/reschedule").json()
+    assert summary["churn"] == {"kept": len(before), "moved": 0, "added": 0}
+    assert _shape(client) == before
+
+
+def test_a_new_commitment_only_moves_what_it_hits(client, uploaded):
+    blocks = [b for b in client.get("/api/schedule").json()["blocks"] if not b["pinned"]]
+    target = blocks[0]
+    hit = [b for b in blocks if b["day"] == target["day"]]
+    resp = client.post("/api/commitments", json={
+        "title": "Shift", "on_date": target["day"], "start_time": "00:00", "end_time": "23:45"})
+    assert resp.status_code == 201
+    after = client.get("/api/schedule").json()["blocks"]
+    assert not any(b["day"] == target["day"] and not b["pinned"] for b in after)
+    others = {(b["assignment_id"], b["day"], b["start_time"]) for b in blocks if b["day"] != target["day"]}
+    still = {(b["assignment_id"], b["day"], b["start_time"]) for b in after}
+    assert len(others - still) <= len(hit)  # at most the displaced hours ripple
+
+
+def test_fresh_rebuild_reports_churn_too(client, uploaded):
+    summary = client.post("/api/reschedule?fresh=true").json()
+    assert set(summary["churn"]) == {"kept", "moved", "added"}
+
+
+# ------------------------------------------------------------ weekly check-in
+
+
+def _past_block(db, title, days_ago=2, hours=2.0, pinned=False):
+    from sqlalchemy import select
+
+    from app.models import Assignment, ScheduleBlock, User
+
+    user = db.scalar(select(User).where(User.external_id == "demo"))
+    a = db.scalar(select(Assignment).where(Assignment.title == title))
+    db.add(ScheduleBlock(user_id=user.id, assignment_id=a.id,
+                         day=TODAY - timedelta(days=days_ago),
+                         start_time=datetime.strptime("18:00", "%H:%M").time(),
+                         hours=hours, pinned=pinned))
+    db.commit()
+    return a
+
+
+def _future_hours(client, title):
+    return sum(b["hours"] for b in client.get("/api/schedule").json()["blocks"]
+               if b["assignment_title"] == title and b["day"] >= str(TODAY))
+
+
+def test_past_blocks_survive_rebuilds_and_count_as_done(client, uploaded, db):
+    _past_block(db, "Project 1", hours=2)
+    client.post("/api/reschedule")
+    blocks = client.get("/api/schedule").json()["blocks"]
+    assert any(b["day"] < str(TODAY) for b in blocks)  # history stays on the calendar
+    assert _future_hours(client, "Project 1") == pytest.approx(6)  # 8 - 2 assumed done
+
+
+def test_checkin_lists_what_was_planned(client, uploaded, db):
+    _past_block(db, "Project 1", hours=2)
+    _past_block(db, "Project 1", days_ago=3, hours=1.5)
+    body = client.get("/api/checkin").json()
+    assert body["since"] == str(TODAY - timedelta(days=3))
+    assert [(t["title"], t["planned_hours"]) for t in body["tasks"]] == [("Project 1", 3.5)]
+
+
+def test_doing_less_than_planned_puts_the_hours_back(client, uploaded, db):
+    a = _past_block(db, "Project 1", hours=2)
+    resp = client.post("/api/checkin", json={"entries": [
+        {"assignment_id": str(a.id), "hours_spent": 1}]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["reviewed_blocks"] == 1
+    assert _future_hours(client, "Project 1") == pytest.approx(7)  # 8 - 1 actually done
+    assert client.get("/api/checkin").json()["tasks"] == []
+    past = [b for b in client.get("/api/schedule").json()["blocks"] if b["day"] < str(TODAY)]
+    assert past and all(b["completed"] for b in past)
+
+
+def test_finishing_long_teaches_the_course(client, uploaded, db):
+    a = _past_block(db, "Project 1", hours=2)
+    resp = client.post("/api/checkin", json={"entries": [
+        {"assignment_id": str(a.id), "hours_spent": 12, "done": True}]})
+    adj = resp.json()["adjustments"]
+    assert adj == [{"course_code": "CIS 6307", "before": 1.0, "after": 1.25, "rescaled": 2}]
+
+    rows = {r["title"]: r for r in client.get("/api/assignments").json()}
+    assert rows["Project 2"]["estimated_hours"] == 10       # 8 x 1.25
+    assert rows["Paper Presentation"]["estimated_hours"] == 7.5  # 6 x 1.25
+    assert _future_hours(client, "Project 1") == 0          # finished: never scheduled again
+
+
+def test_hours_left_resets_the_estimate(client, uploaded, db):
+    a = _past_block(db, "Project 1", hours=2)
+    client.post("/api/checkin", json={"entries": [
+        {"assignment_id": str(a.id), "hours_spent": 3, "hours_left": 2}]})
+    assert _find(client, "Project 1")["estimated_hours"] == 5
+    assert _future_hours(client, "Project 1") == pytest.approx(2)
+
+
+def test_reupload_keeps_what_checkins_learned(client, stub_agent, uploaded, db):
+    a = _past_block(db, "Project 1", hours=2)
+    client.post("/api/checkin", json={"entries": [
+        {"assignment_id": str(a.id), "hours_spent": 12, "done": True}]})
+    client.post(
+        "/api/syllabus",
+        files={"file": ("s.docx", b"PK\x03\x04fake", "application/octet-stream")},
+        data={"term_start": str(TODAY - timedelta(days=30))},
+    )
+    assert _find(client, "Project 2")["estimated_hours"] == 10
+
+
+def test_checkin_rejects_unknown_assignment(client, uploaded):
+    resp = client.post("/api/checkin", json={"entries": [
+        {"assignment_id": "00000000-0000-0000-0000-000000000000", "hours_spent": 1}]})
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------- days off
+
+
+def test_a_week_off_clears_every_day_in_it(client, uploaded):
+    first, last = TODAY + timedelta(days=3), TODAY + timedelta(days=7)
+    resp = client.post("/api/commitments", json={
+        "title": "Fall break", "kind": "off", "on_date": str(first), "ends_on": str(last),
+        "start_time": "00:00", "end_time": "23:59"})
+    assert resp.status_code == 201, resp.text
+    days = {b["day"] for b in client.get("/api/schedule").json()["blocks"] if not b["pinned"]}
+    assert not any(str(first) <= d <= str(last) for d in days)
+
+
+def test_day_off_range_must_run_forwards(client, uploaded):
+    resp = client.post("/api/commitments", json={
+        "title": "Break", "kind": "off", "on_date": str(TODAY + timedelta(days=5)),
+        "ends_on": str(TODAY + timedelta(days=3)), "start_time": "00:00", "end_time": "23:59"})
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------- calendar export
+
+
+def test_calendar_export_lists_upcoming_blocks(client, uploaded):
+    resp = client.get("/api/calendar.ics")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/calendar")
+    upcoming = [b for b in client.get("/api/schedule").json()["blocks"] if b["day"] >= str(TODAY)]
+    assert resp.text.count("BEGIN:VEVENT") == len(upcoming) > 0
+    assert "SUMMARY:Work on Project" in resp.text

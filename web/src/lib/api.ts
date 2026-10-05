@@ -13,6 +13,10 @@ const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 // becomes the Clerk user id and nothing else changes.
 const EXTERNAL_ID = "demo";
 
+/** Upcoming study blocks as an .ics file for Google/Apple/Outlook. */
+export const calendarExportUrl = () =>
+  `${BASE}/api/calendar.ics?external_id=${encodeURIComponent(EXTERNAL_ID)}`;
+
 export type Assignment = {
   id: string;
   course_code: string;
@@ -23,6 +27,8 @@ export type Assignment = {
   estimated_hours: number;
   needs_date: boolean;
   is_category: boolean;
+  /** Attendance, participation: graded, but nothing to date or schedule. */
+  is_participation: boolean;
   color: string | null;
 };
 
@@ -34,6 +40,8 @@ export type Block = {
   start_time: string; // HH:MM:SS
   hours: number;
   pinned: boolean;
+  /** Reviewed at a check-in. */
+  completed: boolean;
 };
 
 export type Course = {
@@ -51,6 +59,8 @@ export type RescheduleSummary = {
   unscheduled: string[];
   needs_date: string[];
   categories: string[];
+  /** How much of the previous plan survived the rebuild. */
+  churn?: { kept: number; moved: number; added: number };
 };
 
 export class ApiError extends Error {
@@ -92,8 +102,11 @@ export const getCourses = () => request<Course[]>("/courses");
 export const deleteCourse = (id: string) =>
   request<RescheduleSummary>(`/courses/${id}`, { method: "DELETE" });
 
-export const reschedule = () =>
-  request<RescheduleSummary>("/reschedule", { method: "POST" });
+/** Rebuild the plan. By default still-valid blocks stay put; `fresh` starts over. */
+export const reschedule = (fresh = false) =>
+  request<RescheduleSummary>(`/reschedule${fresh ? "?fresh=true" : ""}`, {
+    method: "POST",
+  });
 
 export const patchAssignment = (
   id: string,
@@ -115,6 +128,142 @@ export const patchBlock = (
   patch: { day?: string; start_time?: string; hours?: number },
 ) =>
   request<Block>(`/blocks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+
+/* ------------------------------------------------------- commitments */
+
+/** "off" is a whole day (or several) with no study at all. */
+export type CommitmentKind = "class" | "work" | "other" | "off";
+
+export type Commitment = {
+  id: string;
+  /** False for meetings read from a syllabus until the user checks them. */
+  confirmed: boolean;
+  /** Why an unconfirmed meeting's times look wrong, if they do. */
+  warning: string | null;
+  /** The syllabus line it was read from. */
+  note: string | null;
+  title: string;
+  kind: CommitmentKind;
+  source: string;
+  weekday: number | null; // 0 = Monday, matching Python
+  on_date: string | null; // YYYY-MM-DD
+  starts_on: string | null;
+  ends_on: string | null;
+  start_time: string; // HH:MM:SS
+  end_time: string;
+  course_id: string | null;
+  course_code: string | null;
+};
+
+export type NewCommitment = {
+  title: string;
+  kind: CommitmentKind;
+  weekday?: number;
+  on_date?: string;
+  /** Last day of a multi-day one-off, e.g. a break. */
+  ends_on?: string;
+  start_time: string;
+  end_time: string;
+  course_id?: string;
+};
+
+export type StudySettings = {
+  study_start: string | null;
+  study_end: string | null;
+  max_hours_per_day: number | null;
+};
+
+export type SettingsOut = StudySettings & {
+  /** What the scheduler uses when a field above is null. */
+  effective: StudySettings;
+};
+
+export const getCommitments = () => request<Commitment[]>("/commitments");
+
+export const createCommitment = (body: NewCommitment) =>
+  request<Commitment>("/commitments", { method: "POST", body: JSON.stringify(body) });
+
+export const deleteCommitment = (id: string) =>
+  request<RescheduleSummary>(`/commitments/${id}`, { method: "DELETE" });
+
+export const patchCommitment = (
+  id: string,
+  patch: { title?: string; start_time?: string; end_time?: string; confirmed?: boolean },
+) =>
+  request<Commitment>(`/commitments/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+
+export const getSettings = () => request<SettingsOut>("/settings");
+
+export const putSettings = (body: StudySettings) =>
+  request<SettingsOut>("/settings", { method: "PUT", body: JSON.stringify(body) });
+
+/** Python counts weekdays from Monday; JavaScript's getDay() from Sunday. */
+export const pyWeekday = (d: Date) => (d.getDay() + 6) % 7;
+
+/** Every concrete occurrence of a commitment between two dates, inclusive. */
+export function occurrences(
+  c: Commitment,
+  from: Date,
+  to: Date,
+): { start: Date; end: Date }[] {
+  const at = (day: string) => ({
+    start: new Date(`${day}T${c.start_time}`),
+    end: new Date(`${day}T${c.end_time}`),
+  });
+  if (c.on_date) {
+    // One day, or every day from on_date through ends_on.
+    const out: { start: Date; end: Date }[] = [];
+    const last = new Date(`${c.ends_on ?? c.on_date}T00:00:00`);
+    for (const d = new Date(`${c.on_date}T00:00:00`); d <= last; d.setDate(d.getDate() + 1)) {
+      if (d >= from && d <= to) out.push(at(toDateStr(d)));
+    }
+    return out;
+  }
+  const out: { start: Date; end: Date }[] = [];
+  const cursor = new Date(from);
+  cursor.setHours(0, 0, 0, 0);
+  for (; cursor <= to; cursor.setDate(cursor.getDate() + 1)) {
+    if (pyWeekday(cursor) !== c.weekday) continue;
+    const day = toDateStr(cursor);
+    if (c.starts_on && day < c.starts_on) continue;
+    if (c.ends_on && day > c.ends_on) continue;
+    out.push(at(day));
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------- check-in */
+
+export type CheckInTask = {
+  assignment_id: string;
+  title: string;
+  course_code: string;
+  due_at: string | null;
+  estimated_hours: number;
+  completed_hours: number;
+  planned_hours: number;
+};
+
+export type CheckInEntry = {
+  assignment_id: string;
+  hours_spent: number;
+  done?: boolean;
+  hours_left?: number;
+};
+
+export type CheckInResult = RescheduleSummary & {
+  reviewed_blocks: number;
+  adjustments: { course_code: string; before: number; after: number; rescaled: number }[];
+};
+
+export const getCheckIn = () =>
+  request<{ since: string | null; tasks: CheckInTask[] }>("/checkin");
+
+export const postCheckIn = (entries: CheckInEntry[]) =>
+  request<CheckInResult>("/checkin", { method: "POST", body: JSON.stringify({ entries }) });
 
 /* ------------------------------------------------------------------ upload */
 

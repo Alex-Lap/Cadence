@@ -24,6 +24,7 @@ from langgraph.graph import END, START, StateGraph
 from app.agent.tools.estimate_effort import estimate_effort
 from app.agent.tools.parse_syllabus import parse_syllabus
 from app.agent.tools.resolve_dates import resolve_dates
+from app.agent.tools.classify import is_participation_title
 
 
 def key_for(course_code: str, title: str) -> str:
@@ -52,16 +53,24 @@ def node_parse(state: AgentState) -> AgentState:
     )
     if term_start:
         extraction = resolve_dates(extraction, term_start)
+    # Backstop for the model: "Attendance 10%" is never work to schedule.
+    for course in extraction.courses:
+        for a in course.assignments:
+            if is_participation_title(a.title):
+                a.is_participation = True
+                a.is_category = False
+                a.due_at = None
 
     items = [a for c in extraction.courses for a in c.assignments]
-    undated = sum(1 for a in items if a.due_at is None)
-    return {
-        "extraction": extraction,
-        "trace": [
-            f"parsed {len(extraction.courses)} course(s), {len(items)} item(s)"
-            f" - {undated} without a date"
-        ],
-    }
+    undated = sum(1 for a in items if a.due_at is None and not a.is_participation)
+    meetings = sum(len(c.meetings) for c in extraction.courses)
+    trace = [
+        f"parsed {len(extraction.courses)} course(s), {len(items)} item(s)"
+        f" - {undated} without a date"
+    ]
+    if meetings:
+        trace.append(f"found {meetings} class meeting time(s) to confirm")
+    return {"extraction": extraction, "trace": trace}
 
 
 def node_estimate(state: AgentState) -> AgentState:

@@ -83,10 +83,23 @@ class Assignment(Base):
     # A grading bucket ('Homework 30%') rather than one deliverable. Stored so
     # the user can see it and add the real items; never scheduled.
     is_category: Mapped[bool] = mapped_column(default=False)
+    # Attendance, participation: graded, but nothing to schedule or date.
+    is_participation: Mapped[bool] = mapped_column(default=False, server_default="false")
     # User-chosen calendar colour, "#rrggbb". Null means "pick one automatically".
     color: Mapped[str | None] = mapped_column(String(7))
+    # Marked finished at a check-in. Finished work is never scheduled again.
+    done: Mapped[bool] = mapped_column(default=False, server_default="false")
 
     course: Mapped[Course] = relationship(back_populates="assignments")
+
+    @property
+    def schedulable(self) -> bool:
+        return not (self.is_category or self.is_participation or self.done)
+
+    @property
+    def needs_date(self) -> bool:
+        """Real work with no due date yet -- the user has to supply one."""
+        return self.due_at is None and not self.is_category and not self.is_participation
     blocks: Mapped[list[ScheduleBlock]] = relationship(
         back_populates="assignment", cascade="all, delete-orphan"
     )
@@ -130,6 +143,11 @@ class Commitment(Base):
     ends_on: Mapped[date | None] = mapped_column(Date)
     start_time: Mapped[time] = mapped_column(Time)
     end_time: Mapped[time] = mapped_column(Time)
+    # Meetings read from a syllabus start unconfirmed: extraction gets times
+    # wrong often enough that they must be checked before study is planned
+    # around them. Unconfirmed commitments are ignored by the scheduler.
+    confirmed: Mapped[bool] = mapped_column(default=True, server_default="true")
+    note: Mapped[str | None] = mapped_column(String(500))
 
     user: Mapped[User] = relationship(back_populates="commitments")
     course: Mapped[Course | None] = relationship(back_populates="commitments")
@@ -149,6 +167,9 @@ class ScheduleBlock(Base):
     # True when the user dragged/edited this block. The replan tool treats
     # pinned blocks as hard constraints so replanning preserves user edits.
     pinned: Mapped[bool] = mapped_column(default=False)
+    # Reviewed at a check-in. Until then a past block is assumed done (so time
+    # passing doesn't keep replanning it); the check-in replaces that guess with
+    # the hours actually spent, recorded on the assignment.
     completed: Mapped[bool] = mapped_column(default=False)
 
     assignment: Mapped[Assignment | None] = relationship(back_populates="blocks")

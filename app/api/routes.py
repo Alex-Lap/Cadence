@@ -18,23 +18,29 @@ from collections.abc import Iterator
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent.graph import build_graph, key_for
+from app.agent.tools.classify import is_participation_title
+from app.agent.tools.meetings import meeting_issue, meeting_rows
 from app.agent.tools.parse_syllabus import extract_text
 from app.config import get_settings
+from app.ical import calendar as ical_calendar
 from app.db import SessionLocal, get_db
 from app.models import Assignment, Availability, Commitment, Course, ScheduleBlock, User
 from app.scheduler.capacity import DEFAULT_START, build_capacity, occurs_on
-from app.scheduler.core import Block, Task, build_schedule
+from app.scheduler.core import Block, Task, build_schedule, churn, replan
+from app.scheduler.learning import rescale, update_multiplier
 from app.schemas import (
     AssignmentOut,
     AssignmentPatch,
     BlockPatch,
+    CheckIn,
     CommitmentIn,
     CommitmentOut,
+    CommitmentPatch,
     ScheduleBlockOut,
     ScheduleOut,
     StudySettings,
@@ -87,8 +93,12 @@ def _user_assignments(db: Session, user: User) -> list[Assignment]:
     )
 
 
-def _reschedule(db: Session, user: User) -> dict:
+def _reschedule(db: Session, user: User, *, fresh: bool = False) -> dict:
     """Rebuild the user's schedule from persisted assignments.
+
+    By default this is a replan: upcoming blocks that are still valid stay
+    exactly where they are and only displaced hours move, so fixing one date
+    doesn't reshuffle the whole month. `fresh=True` ignores the old plan.
 
     Pinned blocks survive untouched and are charged against both the day's
     capacity and their assignment's remaining hours -- work the user already
@@ -107,19 +117,33 @@ def _reschedule(db: Session, user: User) -> dict:
         )
     )
 
+    today = date.today()
+
+    # Hours already spoken for, per assignment: pinned blocks, plus past blocks
+    # not yet reviewed (assumed done until the check-in says otherwise -- else
+    # every passing day would replan yesterday's work). Reviewed blocks don't
+    # count here; their real hours live in Assignment.completed_hours.
+    accounted = db.scalars(
+        select(ScheduleBlock).where(
+            ScheduleBlock.user_id == user.id,
+            ScheduleBlock.completed.is_(False),
+        )
+    )
     done_hours: dict[str, float] = {}
-    for row in pinned_rows:
-        if row.assignment_id:
+    for row in accounted:
+        if row.assignment_id and (row.pinned or row.day < today):
             key = str(row.assignment_id)
             done_hours[key] = done_hours.get(key, 0.0) + row.hours
 
     tasks: list[Task] = []
     for a in assignments:
-        if a.is_category:
-            continue  # a bucket, not work
+        if not a.schedulable:
+            continue  # a bucket, credit for showing up, or finished
         if a.due_at is None:
             continue  # waiting on a date from the user
-        remaining = a.estimated_hours - done_hours.get(str(a.id), 0.0)
+        remaining = (
+            a.estimated_hours - (a.completed_hours or 0.0) - done_hours.get(str(a.id), 0.0)
+        )
         if remaining <= 0:
             continue
         tasks.append(
@@ -136,7 +160,13 @@ def _reschedule(db: Session, user: User) -> dict:
     availability = list(
         db.scalars(select(Availability).where(Availability.user_id == user.id))
     )
-    commitments = list(db.scalars(select(Commitment).where(Commitment.user_id == user.id)))
+    commitments = list(
+        db.scalars(
+            select(Commitment).where(
+                Commitment.user_id == user.id, Commitment.confirmed.is_(True)
+            )
+        )
+    )
     capacity = build_capacity(
         date.today(),
         PLANNING_HORIZON_DAYS,
@@ -159,13 +189,34 @@ def _reschedule(db: Session, user: User) -> dict:
         for r in pinned_rows
     ]
 
-    plan = build_schedule(tasks, capacity, pinned=pinned_blocks)
-
-    for stale in db.scalars(
-        select(ScheduleBlock).where(
-            ScheduleBlock.user_id == user.id, ScheduleBlock.pinned.is_(False)
+    # Only upcoming blocks are replanned. Past ones are history: they stay on the
+    # calendar and wait for the check-in.
+    stale_rows = list(
+        db.scalars(
+            select(ScheduleBlock).where(
+                ScheduleBlock.user_id == user.id,
+                ScheduleBlock.pinned.is_(False),
+                ScheduleBlock.day >= today,
+            )
         )
-    ):
+    )
+    previous = [
+        Block(
+            task_id=str(r.assignment_id) if r.assignment_id else None,
+            title=None,
+            day=r.day,
+            start_time=r.start_time,
+            hours=r.hours,
+        )
+        for r in stale_rows
+    ]
+    if fresh or not previous:
+        plan = build_schedule(tasks, capacity, pinned=pinned_blocks)
+        moved = churn(previous, plan.blocks)
+    else:
+        plan, moved = replan(previous, tasks, capacity, pinned=pinned_blocks)
+
+    for stale in stale_rows:
         db.delete(stale)
     db.flush()
 
@@ -192,13 +243,17 @@ def _reschedule(db: Session, user: User) -> dict:
         "pinned_kept": len(pinned_rows),
         "unscheduled": plan.unscheduled,
         "needs_date": [
-            a.title for a in assignments if a.due_at is None and not a.is_category
+            a.title for a in assignments if a.needs_date
         ],
         "categories": [a.title for a in assignments if a.is_category],
+        # How much of the previous plan survived: the stability metric.
+        "churn": {"kept": moved.kept, "moved": moved.moved, "added": moved.added},
     }
 
 
-def _persist_extraction(db: Session, user: User, extraction, hours: dict) -> list[str]:
+def _persist_extraction(
+    db: Session, user: User, extraction, hours: dict, term_start: date | None = None
+) -> list[str]:
     """Write courses and assignments. Returns the course codes written.
 
     Nothing is dropped: categories and undated items are stored with their flags
@@ -208,20 +263,29 @@ def _persist_extraction(db: Session, user: User, extraction, hours: dict) -> lis
     for parsed in extraction.courses:
         # Re-uploading a syllabus means "this course, again" -- replace it rather
         # than stacking a second copy (which doubled every hour on the calendar).
+        # What check-ins learned about this course survives the re-upload.
+        multiplier = 1.0
         for stale in db.scalars(
             select(Course).where(Course.user_id == user.id, Course.code == parsed.code)
         ):
+            multiplier = stale.effort_multiplier or 1.0
             db.delete(stale)
         db.flush()
 
         course = Course(
-            user_id=user.id, code=parsed.code, title=parsed.title, term=parsed.term
+            user_id=user.id,
+            code=parsed.code,
+            title=parsed.title,
+            term=parsed.term,
+            effort_multiplier=multiplier,
         )
         db.add(course)
         db.flush()
         codes.append(parsed.code)
 
         for item in parsed.assignments:
+            # Attendance and the like: graded, but nothing to date or schedule.
+            participation = item.is_participation or is_participation_title(item.title)
             db.add(
                 Assignment(
                     course_id=course.id,
@@ -229,9 +293,32 @@ def _persist_extraction(db: Session, user: User, extraction, hours: dict) -> lis
                     due_at=item.due_at,
                     available_at=item.available_at,
                     weight=item.weight,
-                    estimated_hours=hours.get(key_for(parsed.code, item.title), 2.0),
+                    estimated_hours=rescale(
+                        hours.get(key_for(parsed.code, item.title), 2.0), 1.0, multiplier
+                    ),
                     notes=item.notes,
-                    is_category=item.is_category,
+                    is_category=item.is_category and not participation,
+                    is_participation=participation,
+                )
+            )
+
+        # Class meetings become commitments, unconfirmed until the user checks
+        # them. They hang off the course, so a re-upload replaces them too.
+        rows, _skipped = meeting_rows(parsed.code, parsed.meetings)
+        for r in rows:
+            db.add(
+                Commitment(
+                    user_id=user.id,
+                    course_id=course.id,
+                    title=r.title,
+                    kind="class",
+                    source="syllabus",
+                    weekday=r.weekday,
+                    starts_on=term_start,
+                    start_time=r.start,
+                    end_time=r.end,
+                    confirmed=False,
+                    note=r.note,
                 )
             )
     db.flush()
@@ -252,8 +339,9 @@ def _assignment_out(a: Assignment) -> AssignmentOut:
         available_at=a.available_at,
         weight=a.weight,
         estimated_hours=a.estimated_hours,
-        needs_date=a.due_at is None and not a.is_category,
+        needs_date=a.needs_date,
         is_category=a.is_category,
+        is_participation=a.is_participation,
         color=a.color,
     )
 
@@ -306,7 +394,7 @@ async def upload_syllabus(
         }
     )
 
-    codes = _persist_extraction(db, user, result["extraction"], result["hours"])
+    codes = _persist_extraction(db, user, result["extraction"], result["hours"], start)
 
     summary = _reschedule(db, user)
     db.commit()
@@ -347,7 +435,9 @@ def _syllabus_events(
                 state.update(delta)
                 yield _sse("node", {"node": node, "trace": delta.get("trace", [])})
 
-        codes = _persist_extraction(db, user, state["extraction"], state.get("hours", {}))
+        codes = _persist_extraction(
+            db, user, state["extraction"], state.get("hours", {}), term_start
+        )
         yield _sse("persisted", {"courses": codes})
 
         summary = _reschedule(db, user)
@@ -415,7 +505,7 @@ def list_assignments(
     user = _require_user(db, external_id)
     rows = _user_assignments(db, user)
     if needs_date is not None:
-        rows = [a for a in rows if (a.due_at is None and not a.is_category) == needs_date]
+        rows = [a for a in rows if a.needs_date == needs_date]
     rows.sort(key=lambda a: (a.due_at is not None, a.due_at or datetime.max, a.title))
     return [_assignment_out(a) for a in rows]
 
@@ -509,7 +599,11 @@ def patch_block(
 
     # Same reasoning for commitments: a pinned block on top of a lecture would
     # never move off it.
-    for c in db.scalars(select(Commitment).where(Commitment.user_id == user.id)):
+    for c in db.scalars(
+        select(Commitment).where(
+            Commitment.user_id == user.id, Commitment.confirmed.is_(True)
+        )
+    ):
         if not occurs_on(c, new_day):
             continue
         c_start = datetime.combine(new_day, c.start_time)
@@ -535,14 +629,19 @@ def patch_block(
         start_time=row.start_time,
         hours=row.hours,
         pinned=row.pinned,
+        completed=row.completed,
     )
 
 
 @router.post("/reschedule")
-def reschedule(external_id: str = "demo", db: Session = Depends(get_db)):
-    """Rebuild the schedule from what's in the database. No LLM call."""
+def reschedule(
+    external_id: str = "demo", fresh: bool = False, db: Session = Depends(get_db)
+):
+    """Rebuild the schedule from what's in the database. No LLM call.
+
+    Keeps still-valid blocks in place unless `fresh=true`."""
     user = _require_user(db, external_id)
-    summary = _reschedule(db, user)
+    summary = _reschedule(db, user, fresh=fresh)
     db.commit()
     return summary
 
@@ -594,6 +693,7 @@ def get_schedule(external_id: str = "demo", db: Session = Depends(get_db)):
             start_time=b.start_time,
             hours=b.hours,
             pinned=b.pinned,
+            completed=b.completed,
         )
         for b in rows
     ]
@@ -608,6 +708,9 @@ def get_schedule(external_id: str = "demo", db: Session = Depends(get_db)):
 def _commitment_out(c: Commitment) -> CommitmentOut:
     return CommitmentOut(
         id=str(c.id),
+        confirmed=c.confirmed,
+        warning=meeting_issue(c.start_time, c.end_time) if not c.confirmed else None,
+        note=c.note,
         title=c.title,
         kind=c.kind,
         source=c.source,
@@ -677,6 +780,36 @@ def delete_commitment(
     return summary
 
 
+@router.patch("/commitments/{commitment_id}", response_model=CommitmentOut)
+def patch_commitment(
+    commitment_id: uuid.UUID,
+    patch: CommitmentPatch,
+    external_id: str = "demo",
+    db: Session = Depends(get_db),
+):
+    """Correct a commitment's times or name, or confirm one read from a syllabus.
+    Rebuilds, since either can change where study fits."""
+    user = _require_user(db, external_id)
+    row = db.get(Commitment, commitment_id)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(404, "No such commitment.")
+    fields = patch.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(422, "Nothing to change.")
+    start = fields.get("start_time") or row.start_time
+    end = fields.get("end_time") or row.end_time
+    if end <= start:
+        raise HTTPException(422, "A commitment must end after it starts.")
+    for name, value in fields.items():
+        if value is not None:
+            setattr(row, name, value)
+    db.flush()
+    _reschedule(db, user)
+    db.commit()
+    db.refresh(row)
+    return _commitment_out(row)
+
+
 def _settings_out(user: User) -> dict:
     return {
         "study_start": user.study_start,
@@ -711,3 +844,140 @@ def put_study_settings(
     _reschedule(db, user)
     db.commit()
     return _settings_out(user)
+
+
+# --------------------------------------------------------------------------
+# weekly check-in
+# --------------------------------------------------------------------------
+
+
+def _unreviewed(db: Session, user: User) -> list[ScheduleBlock]:
+    """Past study blocks the user hasn't reported on yet."""
+    return list(
+        db.scalars(
+            select(ScheduleBlock)
+            .where(
+                ScheduleBlock.user_id == user.id,
+                ScheduleBlock.completed.is_(False),
+                ScheduleBlock.day < date.today(),
+                ScheduleBlock.assignment_id.is_not(None),
+            )
+            .order_by(ScheduleBlock.day, ScheduleBlock.start_time)
+        )
+    )
+
+
+@router.get("/checkin")
+def get_checkin(external_id: str = "demo", db: Session = Depends(get_db)):
+    """What was planned since the last check-in, per task."""
+    user = _get_or_create_user(db, external_id)
+    rows = _unreviewed(db, user)
+    tasks: dict[str, dict] = {}
+    for r in rows:
+        a = r.assignment
+        t = tasks.setdefault(
+            str(a.id),
+            {
+                "assignment_id": str(a.id),
+                "title": a.title,
+                "course_code": a.course.code,
+                "due_at": a.due_at,
+                "estimated_hours": a.estimated_hours,
+                "completed_hours": a.completed_hours or 0.0,
+                "planned_hours": 0.0,
+            },
+        )
+        t["planned_hours"] += r.hours
+    db.commit()
+    return {
+        "since": rows[0].day if rows else None,
+        "tasks": sorted(tasks.values(), key=lambda t: (t["due_at"] is None, t["due_at"])),
+    }
+
+
+@router.post("/checkin")
+def post_checkin(body: CheckIn, external_id: str = "demo", db: Session = Depends(get_db)):
+    """Record what actually happened, learn from it, and replan.
+
+    Per task: hours spent are added to its total. Finished tasks stop being
+    scheduled and teach their course's effort multiplier (actual / estimated);
+    when that moves, the course's untouched tasks are re-estimated with it.
+    Unfinished tasks can carry a new "hours left" guess. Every past block is
+    then marked reviewed, so its hours count only through what was reported.
+    """
+    user = _require_user(db, external_id)
+    rows = _unreviewed(db, user)
+
+    owned = {str(a.id): a for a in _user_assignments(db, user)}
+    entries = []
+    for e in body.entries:
+        a = owned.get(e.assignment_id)
+        if a is None:
+            raise HTTPException(404, f"No such assignment: {e.assignment_id}")
+        entries.append((e, a))
+
+    adjustments: dict[str, dict] = {}
+    reported = {a.id for _, a in entries}
+    for e, a in entries:
+        a.completed_hours = (a.completed_hours or 0.0) + e.hours_spent
+        if e.done:
+            a.done = True
+            course = a.course
+            before = course.effort_multiplier or 1.0
+            after = update_multiplier(before, a.completed_hours, a.estimated_hours)
+            course.effort_multiplier = after
+            adj = adjustments.setdefault(
+                course.code,
+                {"course_code": course.code, "before": before, "after": after, "rescaled": 0},
+            )
+            adj["after"] = after
+            if after != before:
+                for sibling in course.assignments:
+                    untouched = (
+                        sibling.schedulable
+                        and sibling.id not in reported
+                        and not (sibling.completed_hours or 0.0)
+                    )
+                    if untouched:
+                        sibling.estimated_hours = rescale(sibling.estimated_hours, before, after)
+                        adj["rescaled"] += 1
+        elif e.hours_left is not None:
+            a.estimated_hours = max(0.25, a.completed_hours + e.hours_left)
+
+    for r in rows:
+        r.completed = True
+    db.flush()
+
+    summary = _reschedule(db, user)
+    db.commit()
+    return {
+        **summary,
+        "reviewed_blocks": len(rows),
+        "adjustments": [a for a in adjustments.values() if a["after"] != a["before"]],
+    }
+
+
+# --------------------------------------------------------------------------
+# calendar export
+# --------------------------------------------------------------------------
+
+
+@router.get("/calendar.ics")
+def calendar_ics(external_id: str = "demo", db: Session = Depends(get_db)):
+    """Upcoming study blocks as an .ics file, for Google/Apple/Outlook.
+
+    Blocks keep stable UIDs only until the next rebuild (rows are rewritten),
+    so importing again after changes can duplicate events in apps that don't
+    replace by calendar. Subscribing to this URL avoids that once hosted.
+    """
+    user = _require_user(db, external_id)
+    rows = db.scalars(
+        select(ScheduleBlock)
+        .where(ScheduleBlock.user_id == user.id, ScheduleBlock.day >= date.today())
+        .order_by(ScheduleBlock.day, ScheduleBlock.start_time)
+    )
+    return Response(
+        ical_calendar(list(rows)),
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="cadence.ics"'},
+    )

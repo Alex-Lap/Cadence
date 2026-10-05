@@ -85,7 +85,10 @@ def estimate_effort(
     `effort_multiplier` is what the weekly check-in learns per course: >1 means
     this course consistently runs long for this student.
     """
-    real = [a for a in assignments if not a.get("is_category")]
+    # Categories aren't work; attendance/participation is time in class, not study.
+    real = [
+        a for a in assignments if not a.get("is_category") and not a.get("is_participation")
+    ]
     if not real:
         return []
 

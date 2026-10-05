@@ -14,9 +14,10 @@ DEFAULT_START = time(18, 0)
 
 
 def occurs_on(commitment, day: date) -> bool:
-    """Whether a commitment (recurring weekly or one-off) happens on `day`."""
+    """Whether a commitment (recurring weekly, or one-off over one or more
+    days) happens on `day`."""
     if commitment.on_date is not None:
-        return commitment.on_date == day
+        return commitment.on_date <= day <= (commitment.ends_on or commitment.on_date)
     if commitment.weekday != day.weekday():
         return False
     if commitment.starts_on and day < commitment.starts_on:

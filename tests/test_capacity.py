@@ -93,3 +93,11 @@ def test_commitments_reduce_capacity():
         commitments=[commit("18:00", "20:00", weekday=0)],
     )
     assert caps[0].capacity_hours() == 3
+
+
+def test_day_off_range_covers_every_day_in_it():
+    off = commit("00:00", "23:59", on_date=MONDAY + timedelta(days=2),
+                 ends_on=MONDAY + timedelta(days=4))
+    caps = build_capacity(MONDAY, 7, commitments=[off])
+    zero = [c.day for c in caps if c.capacity_hours() == 0]
+    assert zero == [MONDAY + timedelta(days=d) for d in (2, 3, 4)]

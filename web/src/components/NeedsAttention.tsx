@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 
-import { patchAssignment, reschedule, type Assignment } from "@/lib/api";
+import MeetingReview from "@/components/MeetingReview";
+import {
+  patchAssignment,
+  reschedule,
+  type Assignment,
+  type Commitment,
+} from "@/lib/api";
 
 /**
  * The follow-up form after an upload.
@@ -16,9 +22,12 @@ import { patchAssignment, reschedule, type Assignment } from "@/lib/api";
  */
 export default function NeedsAttention({
   assignments,
+  meetings,
   onChanged,
 }: {
   assignments: Assignment[];
+  /** Unconfirmed class meetings read from a syllabus. */
+  meetings: Commitment[];
   onChanged: () => void;
 }) {
   const [dates, setDates] = useState<Record<string, string>>({});
@@ -28,7 +37,7 @@ export default function NeedsAttention({
 
   const needsDate = assignments.filter((a) => a.needs_date);
   const categories = assignments.filter((a) => a.is_category);
-  if (!needsDate.length && !categories.length) return null;
+  if (!needsDate.length && !categories.length && !meetings.length) return null;
 
   const pending =
     Object.values(dates).filter(Boolean).length + Object.values(promote).filter(Boolean).length;
@@ -58,6 +67,8 @@ export default function NeedsAttention({
   return (
     <section className="rounded-xl border border-warn/40 bg-surface p-5">
       <h2 className="text-sm font-semibold text-warn">Needs your input</h2>
+
+      {meetings.length > 0 && <MeetingReview meetings={meetings} onChanged={onChanged} />}
 
       {needsDate.length > 0 && (
         <div className="mt-3">
@@ -124,6 +135,7 @@ export default function NeedsAttention({
 
       {error && <p className="mt-3 text-xs text-red-300">{error}</p>}
 
+      {(needsDate.length > 0 || categories.length > 0) && (
       <button
         onClick={save}
         disabled={saving || pending === 0}
@@ -131,6 +143,7 @@ export default function NeedsAttention({
       >
         {saving ? "Saving…" : `Save ${pending || ""} and reschedule`}
       </button>
+      )}
     </section>
   );
 }

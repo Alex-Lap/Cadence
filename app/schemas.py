@@ -28,6 +28,14 @@ class ParsedAssignment(BaseModel):
             "than one dated deliverable. Categories are not schedulable."
         ),
     )
+    is_participation: bool = Field(
+        False,
+        description=(
+            "True for credit earned by showing up or taking part -- attendance, "
+            "participation, in-class activities, clicker questions. No study time, "
+            "no due date. Leave due_at null for these."
+        ),
+    )
     due_date_confidence: str = Field(
         "explicit",
         description="'explicit' if the syllabus states this date, 'inferred' if you derived it.",
@@ -55,11 +63,30 @@ class ParsedAssignment(BaseModel):
     )
 
 
+class ParsedMeeting(BaseModel):
+    """A regular class meeting: when the user is in a lecture, lab or section."""
+
+    days: list[Literal["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]] = Field(
+        description="Weekdays it meets. 'TR' or 'Tu/Th' -> ['Tue', 'Thu']; 'MWF' -> ['Mon', 'Wed', 'Fri']."
+    )
+    start_time: str = Field(description="24-hour HH:MM, exactly as stated. 6:00 PM -> '18:00'.")
+    end_time: str = Field(description="24-hour HH:MM, exactly as stated, even if it looks wrong.")
+    kind: Literal["lecture", "lab", "discussion", "other"] = "lecture"
+    location: str | None = None
+    source_text: str = Field(
+        description="The line of the syllabus these times came from, copied verbatim."
+    )
+
+
 class ParsedCourse(BaseModel):
     code: str
     title: str
     term: str | None = None
     assignments: list[ParsedAssignment] = []
+    meetings: list[ParsedMeeting] = Field(
+        default_factory=list,
+        description="Regular weekly class meetings. Empty if the syllabus states none.",
+    )
 
 
 class SyllabusExtraction(BaseModel):
@@ -88,6 +115,8 @@ class ScheduleBlockOut(BaseModel):
     start_time: time
     hours: float
     pinned: bool = False
+    # Reviewed at a check-in (past blocks only).
+    completed: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -111,6 +140,7 @@ class AssignmentOut(BaseModel):
     estimated_hours: float
     needs_date: bool
     is_category: bool
+    is_participation: bool = False
     color: str | None = None
 
 
@@ -137,10 +167,14 @@ class BlockPatch(BaseModel):
 
 
 class CommitmentIn(BaseModel):
-    """A busy stretch: weekly (`weekday`) or one-off (`on_date`), never both."""
+    """A busy stretch: weekly (`weekday`) or one-off (`on_date`), never both.
+
+    A one-off can span days: `on_date` to `ends_on`, e.g. a week of spring
+    break. kind="off" marks a whole day off rather than a few busy hours.
+    """
 
     title: str = Field(min_length=1, max_length=255)
-    kind: Literal["class", "work", "other"] = "other"
+    kind: Literal["class", "work", "other", "off"] = "other"
     weekday: int | None = Field(None, ge=0, le=6, description="0 = Monday")
     on_date: date | None = None
     starts_on: date | None = None
@@ -157,11 +191,19 @@ class CommitmentIn(BaseModel):
             raise ValueError("A commitment must end after it starts.")
         if self.starts_on and self.ends_on and self.ends_on < self.starts_on:
             raise ValueError("ends_on is before starts_on.")
+        if self.on_date and self.ends_on and self.ends_on < self.on_date:
+            raise ValueError("The last day is before the first.")
         return self
 
 
 class CommitmentOut(BaseModel):
     id: str
+    confirmed: bool = True
+    # Something about the times looks off (e.g. a 4h40m lecture). Shown in the
+    # confirm step; never blocks anything.
+    warning: str | None = None
+    # Where it came from: the syllabus line, for extracted meetings.
+    note: str | None = None
     title: str
     kind: str
     source: str
@@ -173,6 +215,27 @@ class CommitmentOut(BaseModel):
     end_time: time
     course_id: str | None
     course_code: str | None
+
+
+class CommitmentPatch(BaseModel):
+    """Correct or confirm a commitment. Confirming puts it into scheduling."""
+
+    title: str | None = Field(None, min_length=1, max_length=255)
+    start_time: time | None = None
+    end_time: time | None = None
+    confirmed: bool | None = None
+
+
+class CheckInEntry(BaseModel):
+    assignment_id: str
+    hours_spent: float = Field(ge=0, le=200)
+    done: bool = False
+    # Not done: how much more the user thinks it needs. Optional.
+    hours_left: float | None = Field(None, ge=0, le=200)
+
+
+class CheckIn(BaseModel):
+    entries: list[CheckInEntry]
 
 
 class StudySettings(BaseModel):
