@@ -19,6 +19,8 @@ services:
       DATABASE_URL: postgresql+psycopg://cadence:cadence@db:5432/cadence
     ports: ["8000:8000"]
     volumes: [".:/srv"]
+    # Dev server with auto-reload; the image's own CMD is the production start.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       db:
         condition: service_healthy

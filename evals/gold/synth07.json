@@ -1,0 +1,69 @@
+{
+  "name": "ENGL 2100 Writing About Science (synthetic)",
+  "source": "evals/syllabi/synth07_science_writing.docx",
+  "format": "docx",
+  "term_start": "2026-08-24",
+  "notes": [
+    "No tables at all: dates, weights and the meeting time are in prose.",
+    "'From 1:00 to 2:15 in the afternoon' is 13:00-14:15.",
+    "Workshops are part of participation, not separate items."
+  ],
+  "items": [
+    {
+      "title": "Essay 1",
+      "kind": "deliverable",
+      "weight": 0.2,
+      "due": {
+        "week": 5
+      }
+    },
+    {
+      "title": "Essay 2",
+      "kind": "deliverable",
+      "weight": 0.2,
+      "due": {
+        "week": 9
+      }
+    },
+    {
+      "title": "Essay 3",
+      "kind": "deliverable",
+      "weight": 0.2,
+      "due": {
+        "week": 13
+      }
+    },
+    {
+      "title": "Final Portfolio",
+      "kind": "deliverable",
+      "weight": 0.25,
+      "due": {
+        "date": "2026-12-07"
+      },
+      "aliases": [
+        "Portfolio"
+      ]
+    },
+    {
+      "title": "Participation",
+      "kind": "participation",
+      "weight": 0.15,
+      "due": null
+    }
+  ],
+  "optional_items": [
+    "Essays",
+    "Workshops",
+    "Workshop"
+  ],
+  "meetings": [
+    {
+      "days": [
+        "Mon",
+        "Wed"
+      ],
+      "start": "13:00",
+      "end": "14:15"
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "name": "BIO 3200 Cell Biology (synthetic)",
+  "source": "evals/syllabi/synth05_cell_biology.docx",
+  "format": "docx",
+  "term_start": "2026-08-24",
+  "notes": [
+    "Attendance and iClicker participation are participation, never 'needs a date'.",
+    "Group project milestones are three separate dated items.",
+    "Lecture MWF plus a Thursday lab; Tuesday office hours are not a meeting.",
+    "Reading Quizzes: ongoing with no dates by design, so excluded like participation (nothing to schedule, nothing to ask)."
+  ],
+  "items": [
+    {
+      "title": "Attendance",
+      "kind": "participation",
+      "weight": 0.05,
+      "due": null
+    },
+    {
+      "title": "Participation",
+      "kind": "participation",
+      "weight": 0.05,
+      "due": null,
+      "aliases": [
+        "iClicker Participation",
+        "Participation (iClicker questions)"
+      ]
+    },
+    {
+      "title": "Reading Quizzes",
+      "kind": "participation",
+      "weight": 0.1,
+      "due": null
+    },
+    {
+      "title": "Lab Notebook",
+      "kind": "deliverable",
+      "weight": 0.1,
+      "due": {
+        "date": "2026-12-04"
+      }
+    },
+    {
+      "title": "Group Project Proposal",
+      "kind": "deliverable",
+      "weight": 0.05,
+      "due": {
+        "date": "2026-09-25"
+      },
+      "aliases": [
+        "Project Proposal",
+        "Proposal"
+      ]
+    },
+    {
+      "title": "Group Project Progress Report",
+      "kind": "deliverable",
+      "weight": 0.1,
+      "due": {
+        "date": "2026-10-30"
+      },
+      "aliases": [
+        "Progress Report"
+      ]
+    },
+    {
+      "title": "Group Project Final Presentation",
+      "kind": "deliverable",
+      "weight": 0.15,
+      "due": {
+        "date": "2026-12-02"
+      },
+      "aliases": [
+        "Final Presentation"
+      ]
+    },
+    {
+      "title": "Midterm Exam",
+      "kind": "deliverable",
+      "weight": 0.2,
+      "due": {
+        "date": "2026-10-14"
+      },
+      "aliases": [
+        "Midterm"
+      ]
+    },
+    {
+      "title": "Final Exam",
+      "kind": "deliverable",
+      "weight": 0.2,
+      "due": {
+        "date": "2026-12-11"
+      }
+    }
+  ],
+  "optional_items": [
+    "Group Project"
+  ],
+  "meetings": [
+    {
+      "days": [
+        "Mon",
+        "Wed",
+        "Fri"
+      ],
+      "start": "09:35",
+      "end": "10:25"
+    },
+    {
+      "days": [
+        "Thu"
+      ],
+      "start": "13:55",
+      "end": "15:50"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+# Render Blueprint for the Cadence API. The frontend is on Vercel and Postgres
+# on Neon; this file only describes the FastAPI service.
+#
+# Free instances sleep after ~15 minutes idle and take ~30-60 s to wake. The
+# Vercel proxy waits up to two minutes, so the first request is slow, not
+# failed.
+services:
+  - type: web
+    name: cadence-api
+    runtime: docker
+    plan: free
+    region: ohio
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/healthz
+    autoDeploy: true
+    envVars:
+      # Secrets: set in the Render dashboard, never in this file.
+      - key: DATABASE_URL          # Neon connection string
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLERK_ISSUER          # Clerk Frontend API URL
+        sync: false
+      - key: CLERK_AUTHORIZED_PARTIES   # your Vercel URL, e.g. https://cadence.vercel.app
+        sync: false
+      - key: LLM_PROVIDER
+        value: anthropic
+      - key: LLM_MODEL
+        value: claude-haiku-4-5-20251001

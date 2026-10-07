@@ -1,0 +1,96 @@
+{
+  "name": "DS 4200 Machine Learning Systems (synthetic)",
+  "source": "evals/syllabi/synth02_ml_systems.pdf",
+  "format": "pdf",
+  "term_start": "2026-08-24",
+  "notes": [
+    "Every deadline is 'released Week N, due K weeks after release': due week = N + K.",
+    "Project milestones are separate graded items with their own weights.",
+    "The exam is placed by week only."
+  ],
+  "items": [
+    {
+      "title": "Assignment 1",
+      "kind": "deliverable",
+      "weight": 0.1,
+      "due": {
+        "week": 4
+      },
+      "available_week": 2
+    },
+    {
+      "title": "Assignment 2",
+      "kind": "deliverable",
+      "weight": 0.1,
+      "due": {
+        "week": 6
+      },
+      "available_week": 3
+    },
+    {
+      "title": "Assignment 3",
+      "kind": "deliverable",
+      "weight": 0.1,
+      "due": {
+        "week": 8
+      },
+      "available_week": 6
+    },
+    {
+      "title": "Assignment 4",
+      "kind": "deliverable",
+      "weight": 0.1,
+      "due": {
+        "week": 12
+      },
+      "available_week": 9
+    },
+    {
+      "title": "Project Proposal",
+      "kind": "deliverable",
+      "weight": 0.05,
+      "due": {
+        "week": 7
+      },
+      "aliases": [
+        "Proposal"
+      ]
+    },
+    {
+      "title": "Project Final Report",
+      "kind": "deliverable",
+      "weight": 0.25,
+      "due": {
+        "week": 15
+      },
+      "aliases": [
+        "Final Report"
+      ]
+    },
+    {
+      "title": "Exam",
+      "kind": "deliverable",
+      "weight": 0.3,
+      "due": {
+        "week": 11
+      },
+      "aliases": [
+        "In-class Exam"
+      ]
+    }
+  ],
+  "optional_items": [
+    "Assignments",
+    "Course Project"
+  ],
+  "meetings": [
+    {
+      "days": [
+        "Mon",
+        "Wed"
+      ],
+      "start": "16:05",
+      "end": "17:20"
+    }
+  ]
+}

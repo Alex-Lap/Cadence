@@ -1,0 +1,41 @@
+{
+  "name": "HIST 2330 Modern Europe (synthetic)",
+  "source": "evals/syllabi/synth04_modern_europe.docx",
+  "format": "docx",
+  "term_start": "2026-08-24",
+  "notes": [
+    "No dates anywhere ('announced in class', 'TBA', 'per the exam schedule'). Nothing may be dated.",
+    "Meeting times are only 'see the course portal': meetings must be empty.",
+    "Reading Responses: ongoing with no dates by design, so excluded like participation (nothing to schedule, nothing to ask)."
+  ],
+  "items": [
+    {
+      "title": "Reading Responses",
+      "kind": "participation",
+      "weight": 0.2,
+      "due": null
+    },
+    {
+      "title": "Midterm Exam",
+      "kind": "deliverable",
+      "weight": 0.25,
+      "due": null,
+      "aliases": [
+        "Midterm"
+      ]
+    },
+    {
+      "title": "Research Paper",
+      "kind": "deliverable",
+      "weight": 0.3,
+      "due": null
+    },
+    {
+      "title": "Final Exam",
+      "kind": "deliverable",
+      "weight": 0.25,
+      "due": null
+    }
+  ],
+  "meetings": []
+}

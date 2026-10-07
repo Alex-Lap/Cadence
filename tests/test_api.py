@@ -184,8 +184,9 @@ def test_courses_endpoint(client, uploaded):
     assert courses[0]["assignments"] == 5
 
 
-def test_unknown_user_is_404(client):
-    assert client.get("/api/assignments?external_id=nobody").status_code == 404
+def test_a_user_with_no_data_yet_is_404(client):
+    """Nothing uploaded and no settings saved: the user doesn't exist yet."""
+    assert client.get("/api/assignments").status_code == 404
 
 
 # ---------------------------------------------------------------- patch

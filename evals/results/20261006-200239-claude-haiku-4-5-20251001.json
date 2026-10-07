@@ -1,0 +1,362 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "ran_at": "20261006-200239",
+  "totals": {
+    "items_found": [
+      65,
+      65
+    ],
+    "kind": [
+      65,
+      65
+    ],
+    "weight": [
+      65,
+      65
+    ],
+    "due": [
+      48,
+      48
+    ],
+    "undated_kept": [
+      17,
+      17
+    ],
+    "handout": [
+      9,
+      9
+    ],
+    "meetings_found": [
+      19,
+      19
+    ]
+  },
+  "invented_dates": 0,
+  "extras": 0,
+  "syllabi": [
+    {
+      "gold": "cap5771",
+      "seconds": 3.1,
+      "items": [
+        4,
+        4
+      ],
+      "kind": [
+        4,
+        4
+      ],
+      "weight": [
+        4,
+        4
+      ],
+      "due": [
+        0,
+        0
+      ],
+      "handout": [
+        0,
+        0
+      ],
+      "undated_kept": [
+        4,
+        4
+      ],
+      "meetings": [
+        0,
+        0
+      ],
+      "meetings_extra": 0,
+      "invented_dates": [],
+      "extras": [],
+      "problems": []
+    },
+    {
+      "gold": "cis6307",
+      "seconds": 6.8,
+      "items": [
+        8,
+        8
+      ],
+      "kind": [
+        8,
+        8
+      ],
+      "weight": [
+        8,
+        8
+      ],
+      "due": [
+        5,
+        5
+      ],
+      "handout": [
+        5,
+        5
+      ],
+      "undated_kept": [
+        3,
+        3
+      ],
+      "meetings": [
+        3,
+        3
+      ],
+      "meetings_extra": 0,
+      "invented_dates": [],
+      "extras": [],
+      "problems": []
+    },
+    {
+      "gold": "synth01",
+      "seconds": 6.2,
+      "items": [
+        9,
+        9
+      ],
+      "kind": [
+        9,
+        9
+      ],
+      "weight": [
+        9,
+        9
+      ],
+      "due": [
+        8,
+        8
+      ],
+      "handout": [
+        0,
+        0
+      ],
+      "undated_kept": [
+        1,
+        1
+      ],
+      "meetings": [
+        2,
+        2
+      ],
+      "meetings_extra": 0,
+      "invented_dates": [],
+      "extras": [],
+      "problems": []
+    },
+    {
+      "gold": "synth02",
+      "seconds": 3.4,
+      "items": [
+        7,
+        7
+      ],
+      "kind": [
+        7,
+        7
+      ],
+      "weight": [
+        7,
+        7
+      ],
+      "due": [
+        7,
+        7
+      ],
+      "handout": [
+        4,
+        4
+      ],
+      "undated_kept": [
+        0,
+        0
+      ],
+      "meetings": [
+        2,
+        2
+      ],
+      "meetings_extra": 0,
+      "invented_dates": [],
+      "extras": [],
+      "problems": []
+    },
+    {
+      "gold": "synth03",
+      "seconds": 7.7,
+      "items": [
+        12,
+        12
+      ],
+      "kind": [
+        12,
+        12
+      ],
+      "weight": [
+        12,
+        12
+      ],
+      "due": [
+        11,
+        11
+      ],
+      "handout": [
+        0,
+        0
+      ],
+      "undated_kept": [
+        1,
+        1
+      ],
+      "meetings": [
+        4,
+        4
+      ],
+      "meetings_extra": 0,
+      "invented_dates": [],
+      "extras": [],
+      "problems": []
+    },
+    {
+      "gold": "synth04",
+      "seconds": 2.9,
+      "items": [
+        4,
+        4
+      ],
+      "kind": [
+        4,
+        4
+      ],
+      "weight": [
+        4,
+        4
+      ],
+      "due": [
+        0,
+        0
+      ],
+      "handout": [
+        0,
+        0
+      ],
+      "undated_kept": [
+        4,
+        4
+      ],
+      "meetings": [
+        0,
+        0
+      ],
+      "meetings_extra": 0,
+      "invented_dates": [],
+      "extras": [],
+      "problems": []
+    },
+    {
+      "gold": "synth05",
+      "seconds": 6.0,
+      "items": [
+        9,
+        9
+      ],
+      "kind": [
+        9,
+        9
+      ],
+      "weight": [
+        9,
+        9
+      ],
+      "due": [
+        6,
+        6
+      ],
+      "handout": [
+        0,
+        0
+      ],
+      "undated_kept": [
+        3,
+        3
+      ],
+      "meetings": [
+        4,
+        4
+      ],
+      "meetings_extra": 0,
+      "invented_dates": [],
+      "extras": [],
+      "problems": []
+    },
+    {
+      "gold": "synth06",
+      "seconds": 5.2,
+      "items": [
+        7,
+        7
+      ],
+      "kind": [
+        7,
+        7
+      ],
+      "weight": [
+        7,
+        7
+      ],
+      "due": [
+        7,
+        7
+      ],
+      "handout": [
+        0,
+        0
+      ],
+      "undated_kept": [
+        0,
+        0
+      ],
+      "meetings": [
+        2,
+        2
+      ],
+      "meetings_extra": 0,
+      "invented_dates": [],
+      "extras": [],
+      "problems": []
+    },
+    {
+      "gold": "synth07",
+      "seconds": 4.2,
+      "items": [
+        5,
+        5
+      ],
+      "kind": [
+        5,
+        5
+      ],
+      "weight": [
+        5,
+        5
+      ],
+      "due": [
+        4,
+        4
+      ],
+      "handout": [
+        0,
+        0
+      ],
+      "undated_kept": [
+        1,
+        1
+      ],
+      "meetings": [
+        2,
+        2
+      ],
+      "meetings_extra": 0,
+      "invented_dates": [],
+      "extras": [],
+      "problems": []
+    }
+  ]
+}

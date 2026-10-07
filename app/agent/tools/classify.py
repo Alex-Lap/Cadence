@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 
-# Graded by showing up or speaking up: there's no study time to plan and no due
-# date to ask for. The model is asked to flag these too; this catches the ones
+# Graded by showing up or speaking up, or ongoing with no dates by design
+# (pop quizzes): there's no block to plan and no due date to ask for. The model is asked to flag these too; this catches the ones
 # it misses, since a stray "Attendance -- needs a date" prompt is pure noise.
 _PARTICIPATION = re.compile(
-    r"\b(attendance|participation|class engagement|engagement|in[- ]class activit(y|ies)|clickers?|iclicker)\b",
+    r"\b(attendance|participation|class engagement|engagement|in[- ]class activit(y|ies)"
+    r"|clickers?|iclicker|unannounced|pop quiz(zes)?)\b",
     re.IGNORECASE,
 )
 

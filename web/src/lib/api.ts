@@ -9,13 +9,25 @@
 // NEXT_PUBLIC_API_BASE only to bypass the proxy and call the API directly.
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
-// Auth is deferred; every request acts as this user. When Clerk lands this
-// becomes the Clerk user id and nothing else changes.
-const EXTERNAL_ID = "demo";
+// Who the API acts for comes from the Clerk session, never from the request:
+// a short-lived token on every fetch, set once by the signed-in app shell.
+type TokenSource = () => Promise<string | null>;
+let tokenSource: TokenSource | null = null;
 
-/** Upcoming study blocks as an .ics file for Google/Apple/Outlook. */
-export const calendarExportUrl = () =>
-  `${BASE}/api/calendar.ics?external_id=${encodeURIComponent(EXTERNAL_ID)}`;
+export function setTokenSource(fn: TokenSource) {
+  tokenSource = fn;
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = tokenSource ? await tokenSource() : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * Upcoming study blocks as an .ics file for Google/Apple/Outlook. A plain
+ * link: the browser sends Clerk's session cookie with it, which the API accepts.
+ */
+export const calendarExportUrl = () => `${BASE}/api/calendar.ics`;
 
 export type Assignment = {
   id: string;
@@ -83,10 +95,13 @@ async function detailOf(res: Response, fallback: string): Promise<string> {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = new URL(`${BASE}/api${path}`, window.location.origin);
-  url.searchParams.set("external_id", EXTERNAL_ID);
   const res = await fetch(url, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(await authHeaders()),
+      ...init?.headers,
+    },
   });
   if (!res.ok) throw new ApiError(res.status, await detailOf(res, res.statusText));
   return res.json() as Promise<T>;
@@ -293,12 +308,12 @@ export async function uploadSyllabusStream(
 ): Promise<void> {
   const form = new FormData();
   form.append("file", file);
-  form.append("external_id", EXTERNAL_ID);
   if (termStart) form.append("term_start", termStart);
 
   const res = await fetch(`${BASE}/api/syllabus/stream`, {
     method: "POST",
     body: form,
+    headers: await authHeaders(),
   });
   if (!res.ok) throw new ApiError(res.status, await detailOf(res, res.statusText));
   if (!res.body) throw new Error("No response body to stream.");

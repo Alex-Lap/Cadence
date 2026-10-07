@@ -31,9 +31,11 @@ class ParsedAssignment(BaseModel):
     is_participation: bool = Field(
         False,
         description=(
-            "True for credit earned by showing up or taking part -- attendance, "
-            "participation, in-class activities, clicker questions. No study time, "
-            "no due date. Leave due_at null for these."
+            "True when there is nothing to schedule and no date to ask for: "
+            "attendance, participation, clicker questions, and ongoing work with "
+            "no individual dates (unannounced quizzes, weekly online homework, "
+            "reading quizzes before each lecture). Leave due_at null. Scheduled "
+            "exams are never this."
         ),
     )
     due_date_confidence: str = Field(

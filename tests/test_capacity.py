@@ -101,3 +101,12 @@ def test_day_off_range_covers_every_day_in_it():
     caps = build_capacity(MONDAY, 7, commitments=[off])
     zero = [c.day for c in caps if c.capacity_hours() == 0]
     assert zero == [MONDAY + timedelta(days=d) for d in (2, 3, 4)]
+
+
+def test_hosted_postgres_urls_use_psycopg3():
+    from app.config import Settings
+
+    for raw in ("postgres://u:p@h/db?sslmode=require", "postgresql://u:p@h/db?sslmode=require"):
+        assert Settings(database_url=raw).database_url == "postgresql+psycopg://u:p@h/db?sslmode=require"
+    already = "postgresql+psycopg://u:p@h/db"
+    assert Settings(database_url=already).database_url == already

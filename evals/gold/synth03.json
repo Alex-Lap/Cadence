@@ -1,0 +1,165 @@
+{
+  "name": "PHYS 2101 General Physics I (synthetic)",
+  "source": "evals/syllabi/synth03_physics.pdf",
+  "format": "pdf",
+  "term_start": "2026-08-24",
+  "notes": [
+    "Dates in six formats: 'Sept. 4', '9/11', 'September 18th', 'Oct 9', 'Nov. 6', '12/10/2026'.",
+    "Lab reports are 20% split over 8 reports: 2.5% each.",
+    "Two weekly meetings (lecture MWF, lab Tuesday); the 7-9 PM exam time is not a meeting.",
+    "Online Homework: ongoing with no dates by design, so excluded like participation (nothing to schedule, nothing to ask)."
+  ],
+  "items": [
+    {
+      "title": "Lab 1",
+      "kind": "deliverable",
+      "weight": 0.025,
+      "due": {
+        "date": "2026-09-04"
+      },
+      "aliases": [
+        "Lab Report 1",
+        "Lab 1 Report"
+      ]
+    },
+    {
+      "title": "Lab 2",
+      "kind": "deliverable",
+      "weight": 0.025,
+      "due": {
+        "date": "2026-09-11"
+      },
+      "aliases": [
+        "Lab Report 2",
+        "Lab 2 Report"
+      ]
+    },
+    {
+      "title": "Lab 3",
+      "kind": "deliverable",
+      "weight": 0.025,
+      "due": {
+        "date": "2026-09-18"
+      },
+      "aliases": [
+        "Lab Report 3",
+        "Lab 3 Report"
+      ]
+    },
+    {
+      "title": "Lab 4",
+      "kind": "deliverable",
+      "weight": 0.025,
+      "due": {
+        "date": "2026-10-02"
+      },
+      "aliases": [
+        "Lab Report 4",
+        "Lab 4 Report"
+      ]
+    },
+    {
+      "title": "Lab 5",
+      "kind": "deliverable",
+      "weight": 0.025,
+      "due": {
+        "date": "2026-10-09"
+      },
+      "aliases": [
+        "Lab Report 5",
+        "Lab 5 Report"
+      ]
+    },
+    {
+      "title": "Lab 6",
+      "kind": "deliverable",
+      "weight": 0.025,
+      "due": {
+        "date": "2026-10-23"
+      },
+      "aliases": [
+        "Lab Report 6",
+        "Lab 6 Report"
+      ]
+    },
+    {
+      "title": "Lab 7",
+      "kind": "deliverable",
+      "weight": 0.025,
+      "due": {
+        "date": "2026-11-06"
+      },
+      "aliases": [
+        "Lab Report 7",
+        "Lab 7 Report"
+      ]
+    },
+    {
+      "title": "Lab 8",
+      "kind": "deliverable",
+      "weight": 0.025,
+      "due": {
+        "date": "2026-11-20"
+      },
+      "aliases": [
+        "Lab Report 8",
+        "Lab 8 Report"
+      ]
+    },
+    {
+      "title": "Online Homework",
+      "kind": "participation",
+      "weight": 0.15,
+      "due": null,
+      "aliases": [
+        "Homework",
+        "WebAssign Homework"
+      ]
+    },
+    {
+      "title": "Exam 1",
+      "kind": "deliverable",
+      "weight": 0.2,
+      "due": {
+        "date": "2026-09-24"
+      }
+    },
+    {
+      "title": "Exam 2",
+      "kind": "deliverable",
+      "weight": 0.2,
+      "due": {
+        "date": "2026-10-29"
+      }
+    },
+    {
+      "title": "Final Exam",
+      "kind": "deliverable",
+      "weight": 0.25,
+      "due": {
+        "date": "2026-12-10"
+      }
+    }
+  ],
+  "optional_items": [
+    "Lab Reports"
+  ],
+  "meetings": [
+    {
+      "days": [
+        "Mon",
+        "Wed",
+        "Fri"
+      ],
+      "start": "11:45",
+      "end": "12:35"
+    },
+    {
+      "days": [
+        "Tue"
+      ],
+      "start": "15:00",
+      "end": "16:50"
+    }
+  ]
+}

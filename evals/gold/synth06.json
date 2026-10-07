@@ -1,0 +1,105 @@
+{
+  "name": "ECON 3010 Intermediate Microeconomics (synthetic)",
+  "source": "evals/syllabi/synth06_microeconomics.pdf",
+  "format": "pdf",
+  "term_start": "2027-01-11",
+  "notes": [
+    "Spring term: 'Jan 29' etc. have no year and must land in 2027.",
+    "Spring break is not an assignment.",
+    "Weights are in a sentence, not a table: 30% over 5 problem sets is 6% each."
+  ],
+  "items": [
+    {
+      "title": "Problem Set 1",
+      "kind": "deliverable",
+      "weight": 0.06,
+      "due": {
+        "date": "2027-01-29"
+      },
+      "aliases": [
+        "PS 1",
+        "PS1"
+      ]
+    },
+    {
+      "title": "Problem Set 2",
+      "kind": "deliverable",
+      "weight": 0.06,
+      "due": {
+        "date": "2027-02-12"
+      },
+      "aliases": [
+        "PS 2",
+        "PS2"
+      ]
+    },
+    {
+      "title": "Problem Set 3",
+      "kind": "deliverable",
+      "weight": 0.06,
+      "due": {
+        "date": "2027-02-26"
+      },
+      "aliases": [
+        "PS 3",
+        "PS3"
+      ]
+    },
+    {
+      "title": "Problem Set 4",
+      "kind": "deliverable",
+      "weight": 0.06,
+      "due": {
+        "date": "2027-03-26"
+      },
+      "aliases": [
+        "PS 4",
+        "PS4"
+      ]
+    },
+    {
+      "title": "Problem Set 5",
+      "kind": "deliverable",
+      "weight": 0.06,
+      "due": {
+        "date": "2027-04-09"
+      },
+      "aliases": [
+        "PS 5",
+        "PS5"
+      ]
+    },
+    {
+      "title": "Midterm Exam",
+      "kind": "deliverable",
+      "weight": 0.3,
+      "due": {
+        "date": "2027-03-04"
+      },
+      "aliases": [
+        "Midterm"
+      ]
+    },
+    {
+      "title": "Final Exam",
+      "kind": "deliverable",
+      "weight": 0.4,
+      "due": {
+        "date": "2027-05-03"
+      }
+    }
+  ],
+  "optional_items": [
+    "Problem Sets"
+  ],
+  "meetings": [
+    {
+      "days": [
+        "Tue",
+        "Thu"
+      ],
+      "start": "09:30",
+      "end": "10:45"
+    }
+  ]
+}

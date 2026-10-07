@@ -1,0 +1,20 @@
+{
+  "name": "CAP 5771 Introduction to Data Science",
+  "source": "samples/CAP5771.pdf",
+  "format": "pdf",
+  "term_start": "2026-08-24",
+  "notes": [
+    "No dates anywhere: the schedule lists topics by week only. Every item must come back undated.",
+    "Exam 1 and Exam 2 are single events (deliverables without dates); the two Homework rows are categories.",
+    "No meeting times are given, so meetings must be empty.",
+    "Homework 0 (a team survey) is mentioned without a weight; listing it or not are both fine."
+  ],
+  "items": [
+    {"title": "Homework: Question-Answer", "aliases": ["Question-Answer Homework", "Homework Question Answer"], "kind": "category", "weight": 0.30, "due": null},
+    {"title": "Homework: Lab Programming", "aliases": ["Lab Programming Homework", "Homework Lab Programming"], "kind": "category", "weight": 0.30, "due": null},
+    {"title": "Exam 1", "kind": "deliverable", "weight": 0.15, "due": null},
+    {"title": "Exam 2", "kind": "deliverable", "weight": 0.25, "due": null}
+  ],
+  "optional_items": ["Homework 0", "Background Survey"],
+  "meetings": []
+}

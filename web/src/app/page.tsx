@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Show, useAuth, UserButton } from "@clerk/nextjs";
+
+import Landing from "@/components/Landing";
 
 import CheckInPanel, { describeCheckIn } from "@/components/CheckInPanel";
 import NeedsAttention from "@/components/NeedsAttention";
@@ -17,6 +20,7 @@ import {
   getCourses,
   getSchedule,
   getSettings,
+  setTokenSource,
   calendarExportUrl,
   patchBlock,
   reschedule,
@@ -68,7 +72,26 @@ function describe(c: Change) {
   return `Moved ${plural(c.moved, "block")}.`;
 }
 
+/** Signed out: what Cadence is and a way in. Signed in: the planner. */
 export default function Home() {
+  return (
+    <>
+      <Show when="signed-out">
+        <Landing />
+      </Show>
+      <Show when="signed-in">
+        <Planner />
+      </Show>
+    </>
+  );
+}
+
+function Planner() {
+  // Every API call carries this user's session token. Set before the first
+  // effect runs, so the initial load is already authenticated.
+  const { getToken } = useAuth();
+  setTokenSource(getToken);
+
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
@@ -203,10 +226,13 @@ export default function Home() {
         <h1 className="text-xl font-semibold tracking-tight text-fg">
           Cadence
         </h1>
-        <p className="truncate text-xs text-muted">
+        <p className="min-w-0 flex-1 truncate text-xs text-muted">
           Syllabi in, study schedule out — the schedule comes from a
           deterministic scheduler, not a language model.
         </p>
+        <div className="shrink-0 self-center">
+          <UserButton />
+        </div>
       </header>
 
       {error && (

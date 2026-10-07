@@ -55,3 +55,19 @@ def test_no_week_and_no_date_stays_null():
 def test_resolved_dates_are_marked_inferred():
     a = only(resolve_dates(make(title="A", due_week=3), TERM_START))
     assert a.due_date_confidence == "inferred"
+
+
+def test_week_overrides_a_date_the_model_computed_wrongly():
+    """'Due the Friday of Week 13' once came back as a Saturday in week 15."""
+    from datetime import datetime
+
+    from app.schemas import ParsedAssignment, ParsedCourse, SyllabusExtraction
+
+    term = date(2026, 8, 24)
+    a = ParsedAssignment(title="Essay 3", due_week=13, due_at=datetime(2026, 12, 5),
+                         due_date_confidence="inferred")
+    ok = ParsedAssignment(title="Essay 1", due_week=5, due_at=datetime(2026, 9, 21))  # Monday, week 5
+    out = resolve_dates(SyllabusExtraction(courses=[ParsedCourse(code="X", title="X", assignments=[a, ok])]), term)
+    essay3, essay1 = out.courses[0].assignments
+    assert essay3.due_at.date() == date(2026, 11, 20)
+    assert essay1.due_at.date() == date(2026, 9, 21)  # inside its week: kept

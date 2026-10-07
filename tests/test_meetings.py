@@ -73,3 +73,9 @@ def test_participation_titles():
 def test_real_work_is_not_participation():
     for t in ["Final Exam", "Paper Presentation", "Project 1: Hash Tables", "Homework 3"]:
         assert not is_participation_title(t), t
+
+
+def test_pop_quizzes_are_excluded_like_participation():
+    assert is_participation_title("Quizzes (short, in class, unannounced)")
+    assert is_participation_title("Pop quizzes")
+    assert not is_participation_title("Quiz 3")

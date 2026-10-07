@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent.graph import build_graph, key_for
+from app.auth import current_external_id
 from app.agent.tools.classify import is_participation_title
 from app.agent.tools.meetings import meeting_issue, meeting_rows
 from app.agent.tools.parse_syllabus import extract_text
@@ -359,7 +360,7 @@ def healthz():
 @router.post("/syllabus")
 async def upload_syllabus(
     file: UploadFile = File(...),
-    external_id: str = Form("demo"),
+    external_id: str = Depends(current_external_id),
     term_start: str | None = Form(None),
     credit_hours: float = Form(3.0),
     db: Session = Depends(get_db),
@@ -456,7 +457,7 @@ def _syllabus_events(
 @router.post("/syllabus/stream")
 async def upload_syllabus_stream(
     file: UploadFile = File(...),
-    external_id: str = Form("demo"),
+    external_id: str = Depends(current_external_id),
     term_start: str | None = Form(None),
     credit_hours: float = Form(3.0),
 ):
@@ -496,7 +497,7 @@ async def upload_syllabus_stream(
 
 @router.get("/assignments", response_model=list[AssignmentOut])
 def list_assignments(
-    external_id: str = "demo",
+    external_id: str = Depends(current_external_id),
     needs_date: bool | None = None,
     db: Session = Depends(get_db),
 ):
@@ -514,7 +515,7 @@ def list_assignments(
 def patch_assignment(
     assignment_id: uuid.UUID,
     patch: AssignmentPatch,
-    external_id: str = "demo",
+    external_id: str = Depends(current_external_id),
     db: Session = Depends(get_db),
 ):
     """Correct an assignment.
@@ -550,7 +551,7 @@ def patch_assignment(
 def patch_block(
     block_id: uuid.UUID,
     patch: BlockPatch,
-    external_id: str = "demo",
+    external_id: str = Depends(current_external_id),
     db: Session = Depends(get_db),
 ):
     """Move a block. Any edit pins it.
@@ -635,7 +636,7 @@ def patch_block(
 
 @router.post("/reschedule")
 def reschedule(
-    external_id: str = "demo", fresh: bool = False, db: Session = Depends(get_db)
+    external_id: str = Depends(current_external_id), fresh: bool = False, db: Session = Depends(get_db)
 ):
     """Rebuild the schedule from what's in the database. No LLM call.
 
@@ -647,7 +648,7 @@ def reschedule(
 
 
 @router.get("/courses")
-def list_courses(external_id: str = "demo", db: Session = Depends(get_db)):
+def list_courses(external_id: str = Depends(current_external_id), db: Session = Depends(get_db)):
     user = _require_user(db, external_id)
     rows = db.scalars(select(Course).where(Course.user_id == user.id))
     return [
@@ -663,7 +664,7 @@ def list_courses(external_id: str = "demo", db: Session = Depends(get_db)):
 
 
 @router.delete("/courses/{course_id}")
-def delete_course(course_id: uuid.UUID, external_id: str = "demo", db: Session = Depends(get_db)):
+def delete_course(course_id: uuid.UUID, external_id: str = Depends(current_external_id), db: Session = Depends(get_db)):
     """Remove a course with its assignments and blocks, then rebuild."""
     user = _require_user(db, external_id)
     course = db.get(Course, course_id)
@@ -677,7 +678,7 @@ def delete_course(course_id: uuid.UUID, external_id: str = "demo", db: Session =
 
 
 @router.get("/schedule", response_model=ScheduleOut)
-def get_schedule(external_id: str = "demo", db: Session = Depends(get_db)):
+def get_schedule(external_id: str = Depends(current_external_id), db: Session = Depends(get_db)):
     user = _require_user(db, external_id)
     rows = db.scalars(
         select(ScheduleBlock)
@@ -726,7 +727,7 @@ def _commitment_out(c: Commitment) -> CommitmentOut:
 
 
 @router.get("/commitments", response_model=list[CommitmentOut])
-def list_commitments(external_id: str = "demo", db: Session = Depends(get_db)):
+def list_commitments(external_id: str = Depends(current_external_id), db: Session = Depends(get_db)):
     user = _require_user(db, external_id)
     rows = db.scalars(
         select(Commitment)
@@ -738,7 +739,7 @@ def list_commitments(external_id: str = "demo", db: Session = Depends(get_db)):
 
 @router.post("/commitments", response_model=CommitmentOut, status_code=201)
 def create_commitment(
-    body: CommitmentIn, external_id: str = "demo", db: Session = Depends(get_db)
+    body: CommitmentIn, external_id: str = Depends(current_external_id), db: Session = Depends(get_db)
 ):
     """Add a busy stretch and rebuild around it."""
     user = _get_or_create_user(db, external_id)
@@ -767,7 +768,7 @@ def create_commitment(
 
 @router.delete("/commitments/{commitment_id}")
 def delete_commitment(
-    commitment_id: uuid.UUID, external_id: str = "demo", db: Session = Depends(get_db)
+    commitment_id: uuid.UUID, external_id: str = Depends(current_external_id), db: Session = Depends(get_db)
 ):
     user = _require_user(db, external_id)
     row = db.get(Commitment, commitment_id)
@@ -784,7 +785,7 @@ def delete_commitment(
 def patch_commitment(
     commitment_id: uuid.UUID,
     patch: CommitmentPatch,
-    external_id: str = "demo",
+    external_id: str = Depends(current_external_id),
     db: Session = Depends(get_db),
 ):
     """Correct a commitment's times or name, or confirm one read from a syllabus.
@@ -825,7 +826,7 @@ def _settings_out(user: User) -> dict:
 
 
 @router.get("/settings")
-def get_study_settings(external_id: str = "demo", db: Session = Depends(get_db)):
+def get_study_settings(external_id: str = Depends(current_external_id), db: Session = Depends(get_db)):
     user = _get_or_create_user(db, external_id)
     db.commit()
     return _settings_out(user)
@@ -833,7 +834,7 @@ def get_study_settings(external_id: str = "demo", db: Session = Depends(get_db))
 
 @router.put("/settings")
 def put_study_settings(
-    body: StudySettings, external_id: str = "demo", db: Session = Depends(get_db)
+    body: StudySettings, external_id: str = Depends(current_external_id), db: Session = Depends(get_db)
 ):
     """Replace the study window and daily cap, then rebuild."""
     user = _get_or_create_user(db, external_id)
@@ -868,7 +869,7 @@ def _unreviewed(db: Session, user: User) -> list[ScheduleBlock]:
 
 
 @router.get("/checkin")
-def get_checkin(external_id: str = "demo", db: Session = Depends(get_db)):
+def get_checkin(external_id: str = Depends(current_external_id), db: Session = Depends(get_db)):
     """What was planned since the last check-in, per task."""
     user = _get_or_create_user(db, external_id)
     rows = _unreviewed(db, user)
@@ -896,7 +897,7 @@ def get_checkin(external_id: str = "demo", db: Session = Depends(get_db)):
 
 
 @router.post("/checkin")
-def post_checkin(body: CheckIn, external_id: str = "demo", db: Session = Depends(get_db)):
+def post_checkin(body: CheckIn, external_id: str = Depends(current_external_id), db: Session = Depends(get_db)):
     """Record what actually happened, learn from it, and replan.
 
     Per task: hours spent are added to its total. Finished tasks stop being
@@ -963,7 +964,7 @@ def post_checkin(body: CheckIn, external_id: str = "demo", db: Session = Depends
 
 
 @router.get("/calendar.ics")
-def calendar_ics(external_id: str = "demo", db: Session = Depends(get_db)):
+def calendar_ics(external_id: str = Depends(current_external_id), db: Session = Depends(get_db)):
     """Upcoming study blocks as an .ics file, for Google/Apple/Outlook.
 
     Blocks keep stable UIDs only until the next rebuild (rows are rewritten),

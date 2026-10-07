@@ -1,0 +1,27 @@
+{
+  "name": "CIS 6307 Internet Data Streaming",
+  "source": "samples/Syllabus-Fall-2026.docx",
+  "format": "docx",
+  "term_start": "2026-08-24",
+  "notes": [
+    "All timing is in course weeks ('handed out week 4, due after 3 weeks').",
+    "Handout weeks are irregular (4, 5, 7, 9, 11) -- the old model invented an even ladder.",
+    "Final Exam has a weight but no date: it must stay undated, not be given one.",
+    "Class time is printed as '10:40pm - 11:30pm' (a typo for am). Copying it as written is correct; the confirm step flags it.",
+    "Office hours (Monday 1pm-3pm) are not a class meeting."
+  ],
+  "items": [
+    {"title": "Project 1", "kind": "deliverable", "weight": 0.10, "due": {"week": 7}, "available_week": 4},
+    {"title": "Project 2", "kind": "deliverable", "weight": 0.10, "due": {"week": 8}, "available_week": 5},
+    {"title": "Project 3", "kind": "deliverable", "weight": 0.10, "due": {"week": 10}, "available_week": 7},
+    {"title": "Project 4", "kind": "deliverable", "weight": 0.10, "due": {"week": 12}, "available_week": 9},
+    {"title": "Project 5", "kind": "deliverable", "weight": 0.10, "due": {"week": 14}, "available_week": 11},
+    {"title": "Paper Presentation", "aliases": ["Presentation"], "kind": "deliverable", "weight": 0.10, "due": null},
+    {"title": "Final Exam", "kind": "deliverable", "weight": 0.30, "due": null},
+    {"title": "Attendance", "kind": "participation", "weight": 0.10, "due": null}
+  ],
+  "optional_items": ["Individual Projects"],
+  "meetings": [
+    {"days": ["Mon", "Wed", "Fri"], "start": ["22:40", "10:40"], "end": ["23:30", "11:30"]}
+  ]
+}

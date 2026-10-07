@@ -68,12 +68,32 @@ Prefer (2). Emit one assignment per individual dated deliverable you find,
 and split the category's weight evenly across its members unless the syllabus
 says otherwise.
 
-Only emit a row with is_category=true when a category has weight but you can
-find no individual dated items for it. Never invent due dates to make a
-category look schedulable -- mark it and move on.
+is_category=true is ONLY for a bucket of several discrete assignments
+("Homework 30%", "Labs (8) 20%") whose individual items you cannot find. A
+single event -- one exam, one paper, one project, one presentation -- is never
+a category, even when its date is TBA, "announced in class" or not given at
+all: emit it as one item with due_at null and the user will supply the date.
+Never invent due dates.
 
-Attendance and participation are graded but involve no work to plan: emit
-them with is_participation=true and no due date, not as categories.
+Only emit items that carry their own share of the grade (or are the individual
+members of a weighted bucket). Do not emit:
+  * expectations or classroom behaviour ("students are expected to participate
+    actively") unless the grading breakdown gives it a weight;
+  * activities graded as part of another item ("workshops count toward
+    participation", "drafts are part of the essay grade") -- they are covered
+    by that item, not separate ones;
+  * a second copy of an item: each graded item appears exactly once.
+
+Some graded items have nothing to plan and no date to ask for. Emit these
+with is_participation=true and no due date, not as categories:
+  * credit for being present or taking part: attendance, sign-in sheets,
+    participation, clicker/iClicker questions;
+  * ongoing work with no individual dates by design: unannounced or pop
+    quizzes, weekly online homework, reading quizzes before each lecture,
+    weekly reading responses or discussion posts.
+A category is different: a bucket of discrete assignments (e.g. "Homework 30%",
+"Labs 20%") whose individual due dates are simply not listed. Scheduled exams
+are never is_participation.
 
 Never invent an assignment that is not in the document.
 
@@ -81,7 +101,9 @@ DATES vs WEEKS -- this matters:
   * If the syllabus gives an explicit calendar date, put it in due_at.
   * If the syllabus expresses timing in COURSE WEEKS, set due_week to the
     week the item is DUE and leave due_at null. Do NOT convert weeks to
-    calendar dates yourself -- code does that downstream.
+    calendar dates yourself -- code does that downstream. This holds even when
+    a weekday is named ("due the Friday of Week 13" -> due_week=13). Set
+    due_date_confidence to "explicit" only for dates printed in the syllabus.
 
 Also set available_week to the week the item is HANDED OUT. Work cannot begin
 before an assignment is assigned, and the scheduler needs that boundary.

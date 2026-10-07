@@ -53,13 +53,16 @@ def node_parse(state: AgentState) -> AgentState:
     )
     if term_start:
         extraction = resolve_dates(extraction, term_start)
-    # Backstop for the model: "Attendance 10%" is never work to schedule.
+    # Backstops for the model. "Attendance 10%" is never work to schedule, and
+    # nothing excluded from scheduling may carry a date.
     for course in extraction.courses:
         for a in course.assignments:
             if is_participation_title(a.title):
                 a.is_participation = True
                 a.is_category = False
+            if a.is_participation:
                 a.due_at = None
+                a.due_week = None
 
     items = [a for c in extraction.courses for a in c.assignments]
     undated = sum(1 for a in items if a.due_at is None and not a.is_participation)

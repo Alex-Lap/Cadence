@@ -15,10 +15,18 @@ def resolve_dates(extraction: SyllabusExtraction, term_start: date) -> SyllabusE
                 monday = term_start + timedelta(weeks=a.available_week - 1)
                 a.available_at = datetime.combine(monday, datetime.min.time())
 
-            if a.due_at is None and a.due_week is not None:
+            if a.due_week is not None:
                 monday = term_start + timedelta(weeks=a.due_week - 1)
-                a.due_at = datetime.combine(
-                    monday + timedelta(days=4), datetime.min.time()
-                )
-                a.due_date_confidence = "inferred"
+                friday = datetime.combine(monday + timedelta(days=4), datetime.min.time())
+                if a.due_at is None:
+                    a.due_at = friday
+                    a.due_date_confidence = "inferred"
+                elif a.due_date_confidence != "explicit" and not (
+                    monday <= a.due_at.date() <= monday + timedelta(days=6)
+                ):
+                    # The model did the calendar arithmetic itself (it says the
+                    # date is inferred) and landed outside its own week. Trust
+                    # the week. A date the syllabus states is never touched.
+                    a.due_at = friday
+                    a.due_date_confidence = "inferred"
     return extraction
