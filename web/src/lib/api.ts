@@ -42,6 +42,10 @@ export type Assignment = {
   /** Attendance, participation: graded, but nothing to date or schedule. */
   is_participation: boolean;
   color: string | null;
+  course_id: string;
+  /** Finished: never scheduled again. */
+  done: boolean;
+  completed_hours: number;
 };
 
 export type Block = {
@@ -126,10 +130,13 @@ export const reschedule = (fresh = false) =>
 export const patchAssignment = (
   id: string,
   patch: {
+    title?: string;
     due_at?: string | null;
     available_at?: string | null;
     estimated_hours?: number;
+    weight?: number | null;
     is_category?: boolean;
+    done?: boolean;
     color?: string | null;
   },
 ) =>
@@ -137,6 +144,22 @@ export const patchAssignment = (
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+
+/** Add a task by hand. Without a course it goes under "Other". Rebuilds. */
+export const createAssignment = (body: {
+  title: string;
+  course_id?: string;
+  due_at?: string;
+  estimated_hours: number;
+  weight?: number;
+}) => request<Assignment>("/assignments", { method: "POST", body: JSON.stringify(body) });
+
+export const deleteAssignment = (id: string) =>
+  request<RescheduleSummary>(`/assignments/${id}`, { method: "DELETE" });
+
+/** "2026-10-08T00:00:00+00:00" -> "2026-10-08". Due dates are calendar days;
+ *  reading them through Date would shift them a day west of UTC. */
+export const dueDay = (iso: string | null) => (iso ? iso.slice(0, 10) : "");
 
 export const patchBlock = (
   id: string,
@@ -175,8 +198,10 @@ export type NewCommitment = {
   kind: CommitmentKind;
   weekday?: number;
   on_date?: string;
-  /** Last day of a multi-day one-off, e.g. a break. */
-  ends_on?: string;
+  /** First day a weekly commitment applies (e.g. from an imported calendar). */
+  starts_on?: string | null;
+  /** Last day of a weekly commitment, or of a multi-day one-off like a break. */
+  ends_on?: string | null;
   start_time: string;
   end_time: string;
   course_id?: string;
@@ -208,6 +233,42 @@ export const patchCommitment = (
   request<Commitment>(`/commitments/${id}`, {
     method: "PATCH",
     body: JSON.stringify(patch),
+  });
+
+export type ImportCandidate = {
+  title: string;
+  kind: CommitmentKind;
+  weekday: number | null;
+  on_date: string | null;
+  starts_on: string | null;
+  ends_on: string | null;
+  start_time: string;
+  end_time: string;
+  occurrences: number;
+  /** Already saved as a commitment: unticked by default. */
+  exists: boolean;
+};
+
+/** Read an .ics file into proposed commitments. Saves nothing. */
+export async function previewCalendarImport(
+  file: File,
+): Promise<{ candidates: ImportCandidate[]; skipped: Record<string, number> }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${BASE}/api/commitments/import`, {
+    method: "POST",
+    body: form,
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new ApiError(res.status, await detailOf(res, res.statusText));
+  return res.json();
+}
+
+/** Save the ticked import candidates with one rebuild. */
+export const createCommitmentsBulk = (items: NewCommitment[]) =>
+  request<RescheduleSummary & { created: number }>("/commitments/bulk", {
+    method: "POST",
+    body: JSON.stringify({ items }),
   });
 
 export const getSettings = () => request<SettingsOut>("/settings");

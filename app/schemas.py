@@ -144,11 +144,30 @@ class AssignmentOut(BaseModel):
     is_category: bool
     is_participation: bool = False
     color: str | None = None
+    course_id: str | None = None
+    done: bool = False
+    completed_hours: float = 0.0
+
+
+class AssignmentIn(BaseModel):
+    """A task the user adds by hand: something the syllabus missed, or work that
+    isn't from a syllabus at all (course_id omitted -> an "Other" course)."""
+
+    title: str = Field(min_length=1, max_length=255)
+    course_id: str | None = None
+    due_at: datetime | None = None
+    estimated_hours: float = Field(2.0, gt=0, le=200)
+    weight: float | None = Field(None, ge=0, le=1)
 
 
 class AssignmentPatch(BaseModel):
     """Fields a user may correct. Everything else is derived."""
 
+    title: str | None = Field(None, min_length=1, max_length=255)
+    weight: float | None = Field(None, ge=0, le=1)
+    # Finished: never scheduled again (same as ticking it at a check-in, but
+    # without teaching the course multiplier).
+    done: bool | None = None
     due_at: datetime | None = None
     available_at: datetime | None = None
     estimated_hours: float | None = None
@@ -217,6 +236,12 @@ class CommitmentOut(BaseModel):
     end_time: time
     course_id: str | None
     course_code: str | None
+
+
+class CommitmentBulk(BaseModel):
+    """Commitments the user ticked after previewing a calendar import."""
+
+    items: list[CommitmentIn] = Field(max_length=300)
 
 
 class CommitmentPatch(BaseModel):

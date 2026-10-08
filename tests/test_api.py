@@ -938,3 +938,115 @@ def test_calendar_export_lists_upcoming_blocks(client, uploaded):
     upcoming = [b for b in client.get("/api/schedule").json()["blocks"] if b["day"] >= str(TODAY)]
     assert resp.text.count("BEGIN:VEVENT") == len(upcoming) > 0
     assert "SUMMARY:Work on Project" in resp.text
+
+
+# ---------------------------------------------------------------- editing tasks
+
+
+def _hours_for(client, title):
+    return sum(b["hours"] for b in client.get("/api/schedule").json()["blocks"]
+               if b["assignment_title"] == title and b["day"] >= str(TODAY))
+
+
+def test_adding_a_task_the_syllabus_missed(client, uploaded):
+    course = client.get("/api/courses").json()[0]
+    resp = client.post("/api/assignments", json={
+        "title": "Reading report", "course_id": course["id"],
+        "due_at": dt(10).isoformat(), "estimated_hours": 3})
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["course_code"] == "CIS 6307"
+    assert _hours_for(client, "Reading report") == pytest.approx(3)
+
+
+def test_a_task_without_a_course_goes_under_other(client):
+    resp = client.post("/api/assignments", json={
+        "title": "Scholarship essay", "due_at": dt(7).isoformat(), "estimated_hours": 2})
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["course_code"] == "OTHER"
+    assert _hours_for(client, "Scholarship essay") == pytest.approx(2)
+    # A second one reuses the same course.
+    client.post("/api/assignments", json={"title": "Taxes", "due_at": dt(9).isoformat()})
+    assert [c["code"] for c in client.get("/api/courses").json()] == ["OTHER"]
+
+
+def test_renaming_and_reestimating_a_task(client, uploaded):
+    row = _find(client, "Project 1")
+    resp = client.patch(f"/api/assignments/{row['id']}",
+                        json={"title": "Project 1: Hash tables", "estimated_hours": 3})
+    assert resp.status_code == 200
+    client.post("/api/reschedule")
+    assert _hours_for(client, "Project 1: Hash tables") == pytest.approx(3)
+
+
+def test_blank_title_is_refused(client, uploaded):
+    row = _find(client, "Project 1")
+    assert client.patch(f"/api/assignments/{row['id']}", json={"title": ""}).status_code == 422
+
+
+def test_marking_a_task_finished_unschedules_it(client, uploaded):
+    row = _find(client, "Project 1")
+    client.patch(f"/api/assignments/{row['id']}", json={"done": True})
+    client.post("/api/reschedule")
+    assert _hours_for(client, "Project 1") == 0
+    assert _find(client, "Project 1")["done"] is True
+
+
+def test_deleting_a_task_removes_its_blocks(client, uploaded):
+    row = _find(client, "Project 2")
+    assert client.delete(f"/api/assignments/{row['id']}").status_code == 200
+    assert all(a["title"] != "Project 2" for a in client.get("/api/assignments").json())
+    assert _hours_for(client, "Project 2") == 0
+
+
+def test_cannot_add_to_someone_elses_course(client, uploaded):
+    resp = client.post("/api/assignments", json={
+        "title": "X", "course_id": "00000000-0000-0000-0000-000000000000"})
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------- calendar import
+
+
+ICS = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\n"
+    "BEGIN:VEVENT\r\nUID:shift\r\nSUMMARY:Work\r\nDTSTAMP:20260901T000000Z\r\n"
+    f"DTSTART:{(TODAY + timedelta(days=1)).strftime('%Y%m%d')}T170000\r\n"
+    f"DTEND:{(TODAY + timedelta(days=1)).strftime('%Y%m%d')}T210000\r\n"
+    "RRULE:FREQ=WEEKLY;COUNT=6\r\nEND:VEVENT\r\n"
+    "BEGIN:VEVENT\r\nUID:dentist\r\nSUMMARY:Dentist\r\nDTSTAMP:20260901T000000Z\r\n"
+    f"DTSTART:{(TODAY + timedelta(days=3)).strftime('%Y%m%d')}T090000\r\n"
+    f"DTEND:{(TODAY + timedelta(days=3)).strftime('%Y%m%d')}T100000\r\nEND:VEVENT\r\n"
+    "END:VCALENDAR\r\n"
+)
+
+
+def _preview(client, body=ICS):
+    return client.post("/api/commitments/import",
+                       files={"file": ("cal.ics", body.encode(), "text/calendar")})
+
+
+def test_import_previews_without_saving(client, uploaded):
+    resp = _preview(client)
+    assert resp.status_code == 200, resp.text
+    cands = resp.json()["candidates"]
+    assert {(c["title"], c["weekday"] is not None) for c in cands} == {("Work", True), ("Dentist", False)}
+    assert all(c["source"] == "syllabus" for c in client.get("/api/commitments").json())
+
+
+def test_importing_the_chosen_ones_plans_around_them(client, uploaded):
+    cands = _preview(client).json()["candidates"]
+    work = [c for c in cands if c["title"] == "Work"]
+    items = [{k: c[k] for k in ("title", "kind", "weekday", "on_date", "starts_on", "ends_on",
+                                "start_time", "end_time")} for c in work]
+    resp = client.post("/api/commitments/bulk", json={"items": items})
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["created"] == 1
+    saved = [c for c in client.get("/api/commitments").json() if c["source"] == "ics"]
+    assert [(c["title"], c["start_time"]) for c in saved] == [("Work", "17:00:00")]
+    # And the preview now marks it as already there.
+    again = {c["title"]: c["exists"] for c in _preview(client).json()["candidates"]}
+    assert again == {"Work": True, "Dentist": False}
+
+
+def test_import_rejects_a_non_calendar(client, uploaded):
+    assert _preview(client, "hello").status_code == 422

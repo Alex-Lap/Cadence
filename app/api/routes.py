@@ -29,16 +29,19 @@ from app.agent.tools.meetings import meeting_issue, meeting_rows
 from app.agent.tools.parse_syllabus import extract_text
 from app.config import get_settings
 from app.ical import calendar as ical_calendar
+from app.ics_import import parse_ics
 from app.db import SessionLocal, get_db
 from app.models import Assignment, Availability, Commitment, Course, ScheduleBlock, User
 from app.scheduler.capacity import DEFAULT_START, build_capacity, occurs_on
 from app.scheduler.core import Block, Task, build_schedule, churn, replan
 from app.scheduler.learning import rescale, update_multiplier
 from app.schemas import (
+    AssignmentIn,
     AssignmentOut,
     AssignmentPatch,
     BlockPatch,
     CheckIn,
+    CommitmentBulk,
     CommitmentIn,
     CommitmentOut,
     CommitmentPatch,
@@ -344,6 +347,9 @@ def _assignment_out(a: Assignment) -> AssignmentOut:
         is_category=a.is_category,
         is_participation=a.is_participation,
         color=a.color,
+        course_id=str(a.course_id),
+        done=a.done,
+        completed_hours=a.completed_hours or 0.0,
     )
 
 
@@ -533,6 +539,8 @@ def patch_assignment(
         raise HTTPException(404, "No such assignment.")
 
     fields = patch.model_dump(exclude_unset=True)
+    if "title" in fields and not fields["title"]:
+        raise HTTPException(422, "A task needs a name.")
     if "estimated_hours" in fields and fields["estimated_hours"] is not None:
         if fields["estimated_hours"] <= 0:
             raise HTTPException(422, "estimated_hours must be positive.")
@@ -545,6 +553,66 @@ def patch_assignment(
     db.commit()
     db.refresh(row)
     return _assignment_out(row)
+
+
+OTHER_COURSE = ("OTHER", "Other tasks")
+
+
+@router.post("/assignments", response_model=AssignmentOut, status_code=201)
+def create_assignment(
+    body: AssignmentIn,
+    external_id: str = Depends(current_external_id),
+    db: Session = Depends(get_db),
+):
+    """Add a task by hand and plan it. Without a course it goes under "Other"."""
+    user = _get_or_create_user(db, external_id)
+    if body.course_id:
+        try:
+            course = db.get(Course, uuid.UUID(body.course_id))
+        except ValueError:
+            course = None
+        if course is None or course.user_id != user.id:
+            raise HTTPException(404, "No such course.")
+    else:
+        code, title = OTHER_COURSE
+        course = db.scalar(select(Course).where(Course.user_id == user.id, Course.code == code))
+        if course is None:
+            course = Course(user_id=user.id, code=code, title=title)
+            db.add(course)
+            db.flush()
+
+    row = Assignment(
+        course_id=course.id,
+        title=body.title.strip(),
+        due_at=_as_utc(body.due_at),
+        estimated_hours=body.estimated_hours,
+        weight=body.weight,
+        notes="Added by hand",
+    )
+    db.add(row)
+    db.flush()
+    _reschedule(db, user)
+    db.commit()
+    db.refresh(row)
+    return _assignment_out(row)
+
+
+@router.delete("/assignments/{assignment_id}")
+def delete_assignment(
+    assignment_id: uuid.UUID,
+    external_id: str = Depends(current_external_id),
+    db: Session = Depends(get_db),
+):
+    """Remove a task and its study blocks, then rebuild."""
+    user = _require_user(db, external_id)
+    row = db.get(Assignment, assignment_id)
+    if row is None or row.course.user_id != user.id:
+        raise HTTPException(404, "No such assignment.")
+    db.delete(row)
+    db.flush()
+    summary = _reschedule(db, user)
+    db.commit()
+    return summary
 
 
 @router.patch("/blocks/{block_id}", response_model=ScheduleBlockOut)
@@ -809,6 +877,73 @@ def patch_commitment(
     db.commit()
     db.refresh(row)
     return _commitment_out(row)
+
+
+MAX_ICS_BYTES = 2_000_000
+
+
+@router.post("/commitments/import")
+async def preview_calendar_import(
+    file: UploadFile = File(...),
+    external_id: str = Depends(current_external_id),
+    db: Session = Depends(get_db),
+):
+    """Read an .ics file and propose commitments. Saves nothing: the user ticks
+    which ones to keep, then POSTs them to /commitments/bulk."""
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "Empty file.")
+    if len(raw) > MAX_ICS_BYTES:
+        raise HTTPException(413, "That calendar file is too large (2 MB max).")
+    user = _get_or_create_user(db, external_id)
+    try:
+        result = parse_ics(raw, today=date.today(), tz=user.timezone or "America/New_York")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    existing = {
+        (c.title, c.weekday, c.on_date, c.start_time, c.end_time)
+        for c in db.scalars(select(Commitment).where(Commitment.user_id == user.id))
+    }
+    db.commit()
+    return {
+        "candidates": [
+            {
+                "title": c.title,
+                "kind": "other",
+                "weekday": c.weekday,
+                "on_date": c.on_date,
+                "starts_on": c.starts_on,
+                "ends_on": c.ends_on,
+                "start_time": c.start_time,
+                "end_time": c.end_time,
+                "occurrences": c.occurrences,
+                "exists": (c.title, c.weekday, c.on_date, c.start_time, c.end_time) in existing,
+            }
+            for c in result.candidates
+        ],
+        "skipped": result.skipped,
+    }
+
+
+@router.post("/commitments/bulk", status_code=201)
+def create_commitments_bulk(
+    body: CommitmentBulk,
+    external_id: str = Depends(current_external_id),
+    db: Session = Depends(get_db),
+):
+    """Save the commitments chosen from an import, with a single rebuild."""
+    user = _get_or_create_user(db, external_id)
+    for item in body.items:
+        db.add(Commitment(
+            user_id=user.id,
+            source="ics",
+            **item.model_dump(exclude={"course_id"}),
+        ))
+    db.flush()
+    summary = _reschedule(db, user)
+    db.commit()
+    return {"created": len(body.items), **summary}
 
 
 def _settings_out(user: User) -> dict:

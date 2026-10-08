@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { format } from "date-fns";
 
+import ImportCalendar from "@/components/ImportCalendar";
 import TimeSelect from "@/components/TimeSelect";
 import {
   createCommitment,
@@ -125,6 +126,8 @@ export default function SettingsPanel({
       <AddDayOff
         onAdd={(row) => run(() => createCommitment(row))}
       />
+
+      <ImportCalendar onImported={onChanged} />
 
       <AddCommitment
         courses={courses}

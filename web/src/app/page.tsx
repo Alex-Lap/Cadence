@@ -271,6 +271,7 @@ function Planner() {
           />
           <TaskList
             assignments={assignments}
+            courses={courses}
             colorOf={colorOf}
             onChanged={load}
           />

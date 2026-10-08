@@ -33,6 +33,20 @@ def _test_database_url() -> str:
     return f"{base}/cadence_test"
 
 
+@pytest.fixture(autouse=True)
+def auth_off(monkeypatch):
+    """Tests act as the local "demo" user regardless of the developer's .env.
+
+    A real CLERK_ISSUER in .env (needed to run the app with sign-in) would
+    otherwise make every request here a 401. tests/test_auth.py turns auth back
+    on explicitly where it is the thing under test.
+    """
+    import app.auth as auth
+
+    settings = get_settings().model_copy(update={"clerk_issuer": None})
+    monkeypatch.setattr(auth, "get_settings", lambda: settings)
+
+
 @pytest.fixture(scope="session")
 def engine():
     url = _test_database_url()
